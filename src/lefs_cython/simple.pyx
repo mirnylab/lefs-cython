@@ -268,7 +268,7 @@ cdef class LEFSimulator(object):
 
     # Internal functions next. They are called by the public functions to do the actual logic of the simulation.
 
-    cdef watch(self, time):
+    cdef watch(self, int_t time):
         """
         An internal method to watch the positions of the LEFs and trigger events when both legs are at a watched position.
         """
@@ -304,7 +304,7 @@ cdef class LEFSimulator(object):
                 self.LEFs[lef, leg] = pos - 1 + leg * leflen  #[pos-1, pos] or [pos-1, pos+1] 
                 self.statuses[lef, leg] = STATUS_MOVING
                 self.occupied[pos - 1 + leg * leflen] = lef + self.NLEFs *leg  # record which LEF is there and which leg            
-            return
+            break
 
     cdef unload(self):
         """ An internal method to try to unload all the LEFs - is called by "step" method"""

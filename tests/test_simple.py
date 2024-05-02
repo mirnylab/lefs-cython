@@ -335,3 +335,48 @@ def test_consistency_of_complex_system_and_non_overlapping_result():
         for j in range(2):
             counter_array[pos[i, j]] += 1
     assert np.all(counter_array <= 1)  # no position has more than one LEF
+
+
+def test_watches():
+    """
+    Create a simple simulations.
+    Then add watches for positions where a LEF will be in the future and test that watches are triggered correctly.
+    """
+
+    N_LEFS = 1
+    N = 100
+    load_array = np.zeros(N)
+    load_array[40] = 1
+    unload_array = np.zeros((N, 4))  # no unloading
+    capture_array = np.zeros((N, 2))  # no CTCF
+    release_array = np.zeros(N)
+    pause_array = np.zeros(N)  # no pausing
+
+    LEF = LEFSimulator(N_LEFS, N, load_array, unload_array, capture_array, release_array, pause_array, skip_load=True)
+    LEF.force_load_LEFs(np.array([[40, 41]]))
+
+    # add watches
+    LEF.set_watches([35, 36, 37, 44, 45, 47], 100)
+    LEF.steps_watch(0, 10)
+    events = LEF.get_events()
+    assert len(events) == 2  # third watch would not be activated
+    assert events[0, 0] == 37  # the inner-most event was triggered first
+    assert events[0, 1] == 44
+    assert events[0, 2] == 2  # at the end of step 2 (step0 = 40->39 step2 = 38->37) - watch is triggered
+
+    # You can reset watches and they reset. And get triggered again.
+    LEF.set_watches([20, 61])  # will happen in 10 steps
+    LEF.steps_watch(10, 15)
+    events = LEF.get_events()
+    assert len(events) == 0  # events reset correctly
+    LEF.steps_watch(15, 20)
+    events = LEF.get_events()
+    assert len(events) == 1  # event happened after resetting watches
+
+    N_LEFS = 2
+    LEF = LEFSimulator(N_LEFS, N, load_array, unload_array, capture_array, release_array, pause_array, skip_load=True)
+    LEF.force_load_LEFs(np.array([[40, 41], [45, 46]]))
+    LEF.set_watches(list(range(100)))  # can set many watches
+    LEF.steps_watch(0, 100)
+    events = LEF.get_events()
+    assert len(events) == 200  # all watches happened - 2 LEFs for 100 steps

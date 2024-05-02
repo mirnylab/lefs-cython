@@ -210,7 +210,7 @@ cdef class LEFSimulator(object):
     def steps_watch(self,step_start, step_end):
         """
         Perform a number of steps, and watch the positions of the LEFs.
-        This function also activates the watches. 
+        This function activates the watches. 
         To use watches, first call set_watches(watch_array, max_events) to set the watches. 
         Then simulate a block of steps and call get_events() to get the events.
         """
@@ -220,7 +220,7 @@ cdef class LEFSimulator(object):
             self.step()
             self.watch(timestep)
 
-    def set_watches(self, watch_array, max_events):
+    def set_watches(self, watch_array, max_events=100000):
         """
         Set the watches for the simulation.
         The watches are positions in the array that trigger an event when both legs of a LEF are at the watched position.
@@ -248,9 +248,9 @@ cdef class LEFSimulator(object):
         self.max_events = max_events  # Store the maximum events allowed
 
 
-        def get_events(self): 
-            ar = np.array(self.events)
-            return ar[:self.max_events]  
+    def get_events(self): 
+        ar = np.array(self.events)
+        return ar[:self.event_number]  
 
     # Internal functions next. They are called by the public functions to do the actual logic of the simulation.
 
@@ -327,7 +327,7 @@ cdef class LEFSimulator(object):
     cdef int get_cached_load_position(self):
         """
         An internal method to get a cached load position. 
-        This is necessary because the load position is drawn from a distribution, and we don't want to call np.random.random() every time.
+        This is necessary because the load position is obtained by binary search, and we don't want to call np.searchsorted() every time.
         """
     
         if self.load_cache_position >= self.load_cache_length - 1:
@@ -341,7 +341,7 @@ cdef class LEFSimulator(object):
         """An internal (= C++, not Python) method to perform a step
         It is called by steps() and steps_watch() methods.
         It does the following logic: 
-        1. Check if the LEF can capture or release to a CTCF site
+        1. Check if the LEF can be captured or released by a CTCF
         2. Check if the LEF can move
         3. Move the LEF if it can
         """
@@ -354,7 +354,7 @@ cdef class LEFSimulator(object):
                     self.statuses[lef, leg] = STATUS_MOVING  # We are now moving
 
                 pos = self.LEFs[lef, leg]
-                if self.statuses[lef, leg] != STATUS_CAPTURED: # not bound = can move
+                if self.statuses[lef, leg] != STATUS_CAPTURED: # not captured = can move
                     newpos = pos + (2 * leg - 1)  # leg 1 moves "right" - increasing numbers
                     if (self.occupied[newpos] == OCCUPIED_FREE): # Can we go there? 
                         if  (randnum() > self.pause_prob[pos]) : # check if we are paused

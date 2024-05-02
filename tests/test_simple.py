@@ -16,7 +16,7 @@ def test_load_and_translocation():
     load_array = np.zeros(N)
     load_array[40] = 1
 
-    unload_array = np.zeros((N, 4))  # no unloading
+    unload_array = np.zeros((N, 5))  # no unloading
 
     capture_array = np.zeros((N, 2))  # no CTCF
     release_array = np.zeros(N)
@@ -48,7 +48,7 @@ def test_translocate_single():
     load_array = np.zeros(N)
     load_array[40] = 1
 
-    unload_array = np.zeros((N, 4))  # no unloading
+    unload_array = np.zeros((N, 5))  # no unloading
 
     capture_array = np.zeros((N, 2))  # no CTCF
     release_array = np.zeros(N)
@@ -77,7 +77,7 @@ def test_collide_two_lefs():
     load_array[40] = 1
     load_array[41] = 1
 
-    unload_array = np.zeros((N, 4))  # no unloading
+    unload_array = np.zeros((N, 5))  # no unloading
 
     capture_array = np.zeros((N, 2))  # no CTCF
     release_array = np.zeros(N)
@@ -105,7 +105,7 @@ def test_occupied_array_matches():
     load_array[40] = 1
     load_array[41] = 1
 
-    unload_array = np.zeros((N, 4))  # no unloading
+    unload_array = np.zeros((N, 5))  # no unloading
 
     capture_array = np.zeros((N, 2))  # no CTCF
     release_array = np.zeros(N)
@@ -155,7 +155,7 @@ def test_status_paused_moving():
     load_array[40] = 1
     load_array[41] = 1
 
-    unload_array = np.zeros((N, 4))  # no unloading
+    unload_array = np.zeros((N, 5))  # no unloading
 
     capture_array = np.zeros((N, 2))  # no CTCF
     release_array = np.zeros(N)
@@ -201,7 +201,7 @@ def test_pausing():
     load_array = np.zeros(N)
     load_array[40] = 1
 
-    unload_array = np.zeros((N, 4))  # no unloading
+    unload_array = np.zeros((N, 5))  # no unloading
 
     capture_array = np.zeros((N, 2))  # no CTCF
     release_array = np.zeros(N)
@@ -238,7 +238,7 @@ def test_capture():
     load_array = np.zeros(N)
     load_array[40] = 1
 
-    unload_array = np.zeros((N, 4))  # no unloading
+    unload_array = np.zeros((N, 5))  # no unloading
 
     capture_array = np.zeros((N, 2))  # no CTCF
     capture_array[37, 0] = 1
@@ -290,7 +290,7 @@ def test_consistency_of_complex_system_and_non_overlapping_result():
 
     load_array = np.random.random(N)
 
-    unload_array = np.random.random((N, 4)) * 0.02
+    unload_array = np.random.random((N, 5)) * 0.02
     capture_array = np.zeros((N, 2))
     release_array = np.zeros(N)
     pause_array = np.zeros(N)
@@ -347,7 +347,7 @@ def test_watches():
     N = 100
     load_array = np.zeros(N)
     load_array[40] = 1
-    unload_array = np.zeros((N, 4))  # no unloading
+    unload_array = np.zeros((N, 5))  # no unloading
     capture_array = np.zeros((N, 2))  # no CTCF
     release_array = np.zeros(N)
     pause_array = np.zeros(N)  # no pausing
@@ -357,7 +357,7 @@ def test_watches():
 
     # add watches
     LEF.set_watches([35, 36, 37, 44, 45, 47], 100)
-    LEF.steps_watch(0, 10)
+    LEF.steps(0, 10, watch=True)
     events = LEF.get_events()
     assert len(events) == 2  # third watch would not be activated
     assert events[0, 0] == 37  # the inner-most event was triggered first
@@ -366,10 +366,10 @@ def test_watches():
 
     # You can reset watches and they reset. And get triggered again.
     LEF.set_watches([20, 61])  # will happen in 10 steps
-    LEF.steps_watch(10, 15)
+    LEF.steps(10, 15, watch=True)
     events = LEF.get_events()
     assert len(events) == 0  # events reset correctly
-    LEF.steps_watch(15, 20)
+    LEF.steps(15, 20, watch=True)
     events = LEF.get_events()
     assert len(events) == 1  # event happened after resetting watches
 
@@ -377,7 +377,7 @@ def test_watches():
     LEF = LEFSimulator(N_LEFS, N, load_array, unload_array, capture_array, release_array, pause_array, skip_load=True)
     LEF.force_load_LEFs(np.array([[40, 41], [45, 46]]))
     LEF.set_watches(list(range(100)))  # can set many watches
-    LEF.steps_watch(0, 100)
+    LEF.steps(0, 100, watch=True)
     events = LEF.get_events()
     assert len(events) == 200  # all watches happened - 2 LEFs for 100 steps
     events = LEF.get_events(reset=True)

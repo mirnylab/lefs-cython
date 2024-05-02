@@ -14,6 +14,12 @@ cimport cython
 ctypedef cnp.int32_t int_t
 ctypedef cnp.float32_t float_t
 
+# matching numpy types for python parts (np.int32, np.float32)
+int_t_np = np.int32
+float_t_np = np.float32
+
+
+
 cdef extern from "<stdlib.h>":
     double drand48()   
 
@@ -138,7 +144,7 @@ cdef class LEFSimulator(object):
         # cumulative load_prob arrays for cached load_prob function
         cum_load_prob = np.cumsum(load_prob)
         cum_load_prob = cum_load_prob / float(cum_load_prob[len(cum_load_prob)-1])
-        self.load_prob_cumulative = np.array(cum_load_prob, np.float32, order = "C")
+        self.load_prob_cumulative = np.array(cum_load_prob, float_t_np, order = "C")
         
         self.NLEFs = NLEFs
         self.N = N 
@@ -160,16 +166,16 @@ cdef class LEFSimulator(object):
             raise ValueError("capture probabilities must have 2 legs")
         
         # main arrays - ensure continuous
-        self.capture_prob = np.array(capture_prob, order="C", dtype=np.float32)
-        self.release_prob = np.array(release_prob, order="C", dtype=np.float32)
-        self.unload_prob = np.array(unload_prob, order="C", dtype=np.float32)
-        self.pause_prob = np.array(pause_prob, order="C", dtype=np.float32)
+        self.capture_prob = np.array(capture_prob, order="C", dtype=float_t_np)
+        self.release_prob = np.array(release_prob, order="C", dtype=float_t_np)
+        self.unload_prob = np.array(unload_prob, order="C", dtype=float_t_np)
+        self.pause_prob = np.array(pause_prob, order="C", dtype=float_t_np)
 
-        self.LEFs = np.zeros((self.NLEFs, 2), dtype = np.int32, order = "C")
-        self.statuses = np.full((self.NLEFs, 2), STATUS_MOVING, dtype = np.int32, order = "C")
+        self.LEFs = np.zeros((self.NLEFs, 2), dtype = int_t_np, order = "C")
+        self.statuses = np.full((self.NLEFs, 2), STATUS_MOVING, dtype = int_t_np, order = "C")
 
         # some safety things for occupied array
-        self.occupied = np.full(self.N, OCCUPIED_FREE, dtype = np.int32, order = "C")        
+        self.occupied = np.full(self.N, OCCUPIED_FREE, dtype = int_t_np, order = "C")
         self.occupied[0] = OCCUPIED_BOUNDARY
         self.occupied[self.N - 1] = OCCUPIED_BOUNDARY
         
@@ -238,7 +244,7 @@ cdef class LEFSimulator(object):
             The maximum number of events to store.
         """
         # Initialize watches to a zeroed array of size N, where each index represents a position in the simulation.
-        self.watch_mask = np.zeros(self.N, dtype=np.int32, order="C") 
+        self.watch_mask = np.zeros(self.N, dtype=int_t_np, order="C") 
 
         # Set the watches at specified positions.
         for position in watch_array:
@@ -248,7 +254,7 @@ cdef class LEFSimulator(object):
                 raise ValueError("Watch position is out of bounds.")
 
         # Initialize the events array to store events. Each event records the position of both legs and the time.
-        self.events = np.zeros((max_events, 3), dtype=np.int32, order = "C")  # Each event is stored as [pos1, pos2, time].
+        self.events = np.zeros((max_events, 3), dtype=int_t_np, order = "C")  # Each event is stored as [pos1, pos2, time].
         self.event_number = 0  # Reset the event number counter.
         self.max_events = max_events  # Store the maximum events allowed
 
@@ -339,7 +345,7 @@ cdef class LEFSimulator(object):
         """
     
         if self.load_cache_position >= self.load_cache_length - 1:
-            foundArray = np.array(np.searchsorted(self.load_prob_cumulative, np.random.random(self.load_cache_length)), dtype=np.int32, order = "C")
+            foundArray = np.array(np.searchsorted(self.load_prob_cumulative, np.random.random(self.load_cache_length)), dtype=int_t_np, order = "C")
             self.load_pos_array = foundArray
             self.load_cache_position = -1        
         self.load_cache_position += 1         

@@ -31,8 +31,6 @@ This example contains a draft of a new extrusion simulation code.
 * **LEFs** - a (NLEFs x 2) array of positions of two LEF legs 
 * **statuses** - a (NLEFs x 4) array of statuses (moving, paused, stalled, captured) of each LEF leg
 
-
-
 ### Loading of LEFs to the sequence 
 
 We assume random loading of a LEF with some load probability as a function of sequence.

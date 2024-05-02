@@ -271,13 +271,18 @@ cdef class LEFSimulator(object):
             leg1_inactive = (self.statuses[lef, 1] == STATUS_INACTIVE)
             if leg0_bound & leg1_bound:
                 continue  # both legs bound, nothing to do
-            if leg0_bound | leg1_bound: # one leg can't move - another can't be inactive
+            elif leg0_bound | leg1_bound: # one leg can't move - another can't be inactive
                 if leg0_inactive:
                     self.statuses[lef, 0] = STATUS_MOVING
                 if leg1_inactive:
                     self.statuses[lef, 1] = STATUS_MOVING
-                continue
-            if randnum() < self.alternate_prob: # inactive->moving; other->inactive
+                continue  # one leg bound - no swapping or reassignment, continuing
+            else: # none of the legs are bound (captured that is)
+                # This will happen e.g. if one leg became released, or at the start
+                if not (leg1_inactive | leg0_inactive):  # one leg has to be made inactive
+                    self.statuses[lef, 0 if randnum() > 0.5 else 1] = STATUS_INACTIVE
+            if randnum() < self.alternate_prob:
+                # swapping of active and inactive legs with some probability
                 if leg0_inactive:
                     self.statuses[lef, 0] = STATUS_MOVING
                     self.statuses[lef, 1] = STATUS_INACTIVE
@@ -441,7 +446,9 @@ cdef class LEFSimulator(object):
                             self.occupied[pos] = OCCUPIED_FREE  # free the old position
                             self.LEFs[lef, leg] = newpos   # update position of leg
                             self.statuses[lef,leg] = STATUS_MOVING  # we are moving now!
-                            if self.move_policy == MOVE_POLICY_ALTERNATE:
+
+                            # for policy ALTERNATE we don't need this, because one of the two legs is inactive or bound.
+                            if self.move_policy == MOVE_POLICY_ONELEG_RANDOM:
                                 continue # this leg moved, we don't attempt the other leg
 
                         else: # we are paused - can't move

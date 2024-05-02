@@ -1,33 +1,38 @@
 #!python
 #cython: boundscheck=False
 #cython: wraparound=False
-#cython: initializedcheck=True
+#cython: initializedcheck=False
 
 
 import numpy as np
-cimport numpy as np
+cimport numpy as cnp
 
 import cython
 cimport cython
 
+# define consistent types to use everywhere
+ctypedef cnp.int32_t int_t
+ctypedef cnp.float32_t float_t
+
 cdef extern from "<stdlib.h>":
     double drand48()   
 
-cdef cython.double randnum():
-    return drand48()
+@cython.exceptval(check=False)
+cdef float_t randnum() noexcept:
+    return <float_t>drand48()
 
 # LEF statuses 
-cdef int NUM_STATUSES = 4 # moving, paused, bound
-cdef int STATUS_MOVING = 0  # LEF moved last time
-cdef int STATUS_PAUSED = 1  # LEF failed to move the last step because it was paused
-cdef int STATUS_STALLED = 2 # LEF failed to move the last step because it was stalled at another LEF or boundary
-cdef int STATUS_CAPTURED = 3   # LEF is bound by CTCF and cannot move 
+cdef int_t NUM_STATUSES = 4 # moving, paused, bound
+cdef int_t STATUS_MOVING = 0  # LEF moved last time
+cdef int_t STATUS_PAUSED = 1  # LEF failed to move the last step because it was paused
+cdef int_t STATUS_STALLED = 2 # LEF failed to move the last step because it was stalled at another LEF or boundary
+cdef int_t STATUS_CAPTURED = 3   # LEF is bound by CTCF and cannot move 
 # Could add more statuses e.g. the leg is "resting" because only one leg can move at a time 
 # but this is the case for a more complicated thing
 
 # occipied array statuses 
-cdef int OCCUPIED_FREE = -2 
-cdef int OCCUPIED_BOUNDARY = -1 
+cdef int_t OCCUPIED_FREE = -2 
+cdef int_t OCCUPIED_BOUNDARY = -1 
 
 # a limitation of Cython - we cannot share constants between Cython and Python, so we need to define them in Python as a dict
 constants = {}
@@ -99,28 +104,28 @@ cdef class LEFSimulator(object):
     
 
     """
-    cdef int N
-    cdef int NLEFs
+    cdef int_t N
+    cdef int_t NLEFs
     # user defined arrays - unload (load is not needed because cumulatively loaded probabilities are used)
-    cdef cython.double [:,:] unload_prob 
+    cdef float_t [:,::1] unload_prob 
     # user defined arrays - CTCF interactions
-    cdef cython.double [:, :] capture_prob
-    cdef cython.double [:] release_prob    
-    cdef cython.double [:] pause_prob
+    cdef float_t [:, ::1] capture_prob
+    cdef float_t [::1] release_prob    
+    cdef float_t [::1] pause_prob
     # internal arrays
-    cdef cython.double [:] load_prob_cumulative
-    cdef np.int64_t [:, :] LEFs
-    cdef np.int64_t [:, :] statuses 
-    cdef np.int64_t [:] occupied 
+    cdef float_t [::1] load_prob_cumulative
+    cdef int_t [:, ::1] LEFs
+    cdef int_t [:, ::1] statuses 
+    cdef int_t [::1] occupied 
     
-    cdef int load_cache_length
-    cdef int load_cache_position
-    cdef np.int64_t [:] load_pos_array
+    cdef int_t load_cache_length
+    cdef int_t load_cache_position
+    cdef int_t [::1] load_pos_array
     
-    cdef np.int64_t [:, :] events
-    cdef np.int64_t [:] watch_mask
-    cdef np.int64_t event_number
-    cdef np.int64_t max_events
+    cdef int_t [:, ::1] events
+    cdef int_t [::1] watch_mask
+    cdef int_t event_number
+    cdef int_t max_events
     
     def __init__(self, NLEFs, N,  load_prob, unload_prob, capture_prob, release_prob, pause_prob, skip_load = False):
         """
@@ -131,9 +136,9 @@ cdef class LEFSimulator(object):
         load_prob[len(load_prob)-2:len(load_prob)] = 0
          
         # cumulative load_prob arrays for cached load_prob function
-        cumem = np.cumsum(load_prob)
-        cumem = cumem / float(cumem[len(cumem)-1])
-        self.load_prob_cumulative = np.array(cumem, np.double)
+        cum_load_prob = np.cumsum(load_prob)
+        cum_load_prob = cum_load_prob / float(cum_load_prob[len(cum_load_prob)-1])
+        self.load_prob_cumulative = np.array(cum_load_prob, np.float32, order = "C")
         
         self.NLEFs = NLEFs
         self.N = N 
@@ -154,17 +159,17 @@ cdef class LEFSimulator(object):
         if len(capture_prob[0]) != 2:
             raise ValueError("capture probabilities must have 2 legs")
         
-        # main arrays
-        self.capture_prob = capture_prob
-        self.release_prob = release_prob
-        self.unload_prob = unload_prob
-        self.pause_prob = pause_prob
+        # main arrays - ensure continuous
+        self.capture_prob = np.array(capture_prob, order="C", dtype=np.float32)
+        self.release_prob = np.array(release_prob, order="C", dtype=np.float32)
+        self.unload_prob = np.array(unload_prob, order="C", dtype=np.float32)
+        self.pause_prob = np.array(pause_prob, order="C", dtype=np.float32)
 
-        self.LEFs = np.zeros((self.NLEFs, 2), int)
-        self.statuses = np.full((self.NLEFs, 2), STATUS_MOVING, int)
+        self.LEFs = np.zeros((self.NLEFs, 2), dtype = np.int32, order = "C")
+        self.statuses = np.full((self.NLEFs, 2), STATUS_MOVING, dtype = np.int32, order = "C")
 
         # some safety things for occupied array
-        self.occupied = np.full(self.N, OCCUPIED_FREE, dtype=int)        
+        self.occupied = np.full(self.N, OCCUPIED_FREE, dtype = np.int32, order = "C")        
         self.occupied[0] = OCCUPIED_BOUNDARY
         self.occupied[self.N - 1] = OCCUPIED_BOUNDARY
         
@@ -180,7 +185,7 @@ cdef class LEFSimulator(object):
         """
         Perform a number of steps. This is a Python function to be called, rather than step() which is internal.         
         """
-        cdef int i 
+        cdef int_t i 
         for i in range(step_start, step_end):
             self.unload()
             self.step()
@@ -198,7 +203,7 @@ cdef class LEFSimulator(object):
         """
         A function used for testing: forces LEFs to specific positions with matching occupied array
         """
-        cdef int lef, leg
+        cdef int_t lef, leg
         for lef in range(self.NLEFs):
             for leg in range(2):
                 self.LEFs[lef, leg] = positions[lef, leg]
@@ -214,7 +219,7 @@ cdef class LEFSimulator(object):
         To use watches, first call set_watches(watch_array, max_events) to set the watches. 
         Then simulate a block of steps and call get_events() to get the events.
         """
-        cdef int timestep
+        cdef int_t timestep
         for timestep in range(step_start, step_end):
             self.unload()
             self.step()
@@ -233,7 +238,7 @@ cdef class LEFSimulator(object):
             The maximum number of events to store.
         """
         # Initialize watches to a zeroed array of size N, where each index represents a position in the simulation.
-        self.watch_mask = np.zeros(self.N, dtype=np.int64) 
+        self.watch_mask = np.zeros(self.N, dtype=np.int32, order="C") 
 
         # Set the watches at specified positions.
         for position in watch_array:
@@ -243,7 +248,7 @@ cdef class LEFSimulator(object):
                 raise ValueError("Watch position is out of bounds.")
 
         # Initialize the events array to store events. Each event records the position of both legs and the time.
-        self.events = np.zeros((max_events, 3), dtype=np.int64)  # Each event is stored as [pos1, pos2, time].
+        self.events = np.zeros((max_events, 3), dtype=np.int32, order = "C")  # Each event is stored as [pos1, pos2, time].
         self.event_number = 0  # Reset the event number counter.
         self.max_events = max_events  # Store the maximum events allowed
 
@@ -261,7 +266,7 @@ cdef class LEFSimulator(object):
         """
         An internal method to watch the positions of the LEFs and trigger events when both legs are at a watched position.
         """
-        cdef int lef
+        cdef int_t lef
         for lef in range(self.NLEFs):            
             if self.watch_mask[self.LEFs[lef, 0]] == 1 and self.watch_mask[self.LEFs[lef, 1]] == 1:
                 self.events[self.event_number, 0] = self.LEFs[lef, 0]
@@ -276,7 +281,7 @@ cdef class LEFSimulator(object):
         """
         An internal method to load a given LEF - is called by "unload" method on its own
         """
-        cdef int pos, leflen, leg
+        cdef int_t pos, leflen, leg
   
         while True:
             pos = self.get_cached_load_position()
@@ -297,8 +302,8 @@ cdef class LEFSimulator(object):
 
     cdef unload(self):
         """ An internal method to try to unload all the LEFs - is called by "step" method"""
-        cdef int lef, leg, s1, s2
-        cdef double unload, unload1, unload2
+        cdef int_t lef, leg, s1, s2
+        cdef float_t unload, unload1, unload2
          
         for lef in range(self.NLEFs): # check all LEFs
             s1 = self.statuses[lef, 0]
@@ -327,14 +332,14 @@ cdef class LEFSimulator(object):
                     self.occupied[self.LEFs[lef, leg]] = OCCUPIED_FREE
                 self.load_lef(lef)
     
-    cdef int get_cached_load_position(self):
+    cdef int_t get_cached_load_position(self):
         """
         An internal method to get a cached load position. 
         This is necessary because the load position is obtained by binary search, and we don't want to call np.searchsorted() every time.
         """
     
         if self.load_cache_position >= self.load_cache_length - 1:
-            foundArray = np.array(np.searchsorted(self.load_prob_cumulative, np.random.random(self.load_cache_length)), dtype = np.int64)
+            foundArray = np.array(np.searchsorted(self.load_prob_cumulative, np.random.random(self.load_cache_length)), dtype=np.int32, order = "C")
             self.load_pos_array = foundArray
             self.load_cache_position = -1        
         self.load_cache_position += 1         
@@ -348,7 +353,7 @@ cdef class LEFSimulator(object):
         2. Check if the LEF can move
         3. Move the LEF if it can
         """
-        cdef int lef, leg        
+        cdef int_t lef, leg, pos, newpos        
         for lef in range(self.NLEFs):
             for leg in range(2):                
                 if randnum() < self.capture_prob[self.LEFs[lef, leg], leg]: # try to capture the leg 

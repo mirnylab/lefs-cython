@@ -17,10 +17,11 @@ cdef cython.double randnum():
     return drand48()
 
 # LEF statuses 
-cdef int NUM_STATUSES = 3 # moving, paused, bound
+cdef int NUM_STATUSES = 4 # moving, paused, bound
 cdef int STATUS_MOVING = 0  # LEF moved last time
-cdef int STATUS_PAUSED = 1  # LEF failed to move the last step 
-cdef int STATUS_CAPTURED = 2   # LEF is bound by CTCF and cannot move 
+cdef int STATUS_PAUSED = 1  # LEF failed to move the last step because it was paused
+cdef int STATUS_STALLED = 2 # LEF failed to move the last step because it was stalled at another LEF or boundary
+cdef int STATUS_CAPTURED = 3   # LEF is bound by CTCF and cannot move 
 # Could add more statuses e.g. the leg is "resting" because only one leg can move at a time 
 # but this is the case for a more complicated thing
 
@@ -33,6 +34,7 @@ constants = {}
 constants['NUM_STATUSES'] = NUM_STATUSES
 constants['STATUS_MOVING'] = STATUS_MOVING
 constants['STATUS_PAUSED'] = STATUS_PAUSED
+constants['STATUS_STALLED'] = STATUS_STALLED
 constants['STATUS_CAPTURED'] = STATUS_CAPTURED
 constants['OCCUPIED_FREE'] = OCCUPIED_FREE
 constants['OCCUPIED_BOUNDARY'] = OCCUPIED_BOUNDARY
@@ -172,6 +174,7 @@ cdef class LEFSimulator(object):
             for ind in range(self.NLEFs):
                 self.load_lef(ind)
 
+    # Public functions first. They actually call private functions to do the work.
 
     def steps(self,step_start, step_end):
         """
@@ -249,7 +252,8 @@ cdef class LEFSimulator(object):
             ar = np.array(self.events)
             return ar[:self.max_events]  
 
-        
+    # Internal functions next. They are called by the public functions to do the actual logic of the simulation.
+
     cdef watch(self, time):
         """
         An internal method to watch the positions of the LEFs and trigger events when both legs are at a watched position.
@@ -289,10 +293,11 @@ cdef class LEFSimulator(object):
             return
 
     cdef unload(self):
+        """ An internal method to try to unload all the LEFs - is called by "step" method"""
         cdef int lef, leg, s1, s2
         cdef double unload, unload1, unload2
          
-        for lef in range(self.NLEFs):     
+        for lef in range(self.NLEFs): # check all LEFs
             s1 = self.statuses[lef, 0]
             s2 = self.statuses[lef, 1]            
             unload1 = self.unload_prob[self.LEFs[lef, 0], self.statuses[lef,0]]
@@ -300,12 +305,17 @@ cdef class LEFSimulator(object):
 
             # logic for releaseing - subject to change 
             if s1 == s2:  # same statuses for both legs 
-                unload = (unload1 + unload2) / 2   # just take the mean of probabilities - it's fair
-            elif s1 == STATUS_CAPTURED or s2 == STATUS_CAPTURED:  # one leg is at CTCF, another is not
-                # This is the only exception, and that is because CTCF protects "the whole thing", not just one leg
+                unload = (unload1 + unload2) / 2   # just take the mean of probabilities - each leg unloads "independently"
+
+            # This is the only exception, and that is because CTCF protects "the whole thing", not just one leg
+            elif s1 == STATUS_CAPTURED or s2 == STATUS_CAPTURED:  # one leg is at CTCF, another is not                
                 unload = min(unload1, unload2)  # take the most protective probability - smallest unload
+            
+            # Treating paused and stalled the same way - each leg is independent
+            elif s1 == STATUS_STALLED or s2 == STATUS_STALLED:  # one leg stalled another moving or paused
+                unload = (unload1+unload2) / 2  # take the mean, which means higher prob if stalled leg is unloaded faster
             elif s1 == STATUS_PAUSED or s2 == STATUS_PAUSED:  # one leg paused another moving 
-                unload = (unload1+unload2) / 2  # take the mean, which means higher prob if stalled leg is 
+                unload = (unload1+unload2) / 2  # take the mean, which means higher prob if paused leg is unloaded faster
             else:
                 raise ValueError("Today 2+2 = -5e452, the number of atoms in the universe is negative, and the bugs are all out.")
             
@@ -346,10 +356,15 @@ cdef class LEFSimulator(object):
                 pos = self.LEFs[lef, leg]
                 if self.statuses[lef, leg] != STATUS_CAPTURED: # not bound = can move
                     newpos = pos + (2 * leg - 1)  # leg 1 moves "right" - increasing numbers
-                    if (self.occupied[newpos] == OCCUPIED_FREE) and (randnum() > self.pause_prob[pos]) : #can move and are not paused
-                        self.occupied[newpos] = lef + self.NLEFs * leg  # update occupied array 
-                        self.occupied[pos] = OCCUPIED_FREE  # free the old position
-                        self.LEFs[lef, leg] = newpos   # update position of leg 
-                        self.statuses[lef,leg] = STATUS_MOVING  # we are moving now!    
-                    else:
-                        self.statuses[lef,leg] = STATUS_PAUSED  # we are paused now!             
+                    if (self.occupied[newpos] == OCCUPIED_FREE): # Can we go there? 
+                        if  (randnum() > self.pause_prob[pos]) : # check if we are paused
+                            # The leg can move, so we need to update the arrays
+                            self.occupied[newpos] = lef + self.NLEFs * leg  # update occupied array 
+                            self.occupied[pos] = OCCUPIED_FREE  # free the old position
+                            self.LEFs[lef, leg] = newpos   # update position of leg 
+                            self.statuses[lef,leg] = STATUS_MOVING  # we are moving now!    
+                        else: # we are paused - can't move
+                            self.statuses[lef,leg] = STATUS_PAUSED  # we are paused because of the pause probability
+                    else: # we are stalled - can't move
+                        self.statuses[lef,leg] = STATUS_STALLED  # we are stalled because other position is occupied
+                                 

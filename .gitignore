@@ -1,3 +1,9 @@
+# specific stuff to this project 
+
+## HTML files for cython -a 
+src/lefs_cython/simple.html
+
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]

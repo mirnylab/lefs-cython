@@ -217,16 +217,23 @@ cdef class LEFSimulator(object):
     def get_LEFs(self):
         return np.array(self.LEFs)
 
-    def force_load_LEFs(self, positions):
+    def force_load_LEFs(self, positions, statuses = None):
         """
         A function used for testing: forces LEFs to specific positions with matching occupied array
         """
         cdef int_t lef, leg
+        if positions.shape != (self.NLEFs, 2):
+            raise ValueError("Positions must be of length NLEFs * 2")
+        if statuses is None:
+            statuses = np.full((self.NLEFs, 2), STATUS_MOVING, dtype = int_t_np, order = "C")
+        else:
+            if statuses.shape != (self.NLEFs, 2):
+                raise ValueError("Statuses must be of shape NLEFs x 2")
         for lef in range(self.NLEFs):
             for leg in range(2):
                 self.LEFs[lef, leg] = positions[lef, leg]
                 self.occupied[positions[lef, leg]] = lef + self.NLEFs * leg
-                self.statuses[lef, leg] = STATUS_MOVING
+                self.statuses[lef, leg] = statuses[lef, leg]
 
     def steps(self,step_start, step_end, watch=False):
         """
@@ -430,9 +437,11 @@ cdef class LEFSimulator(object):
 
                 # capture and release logic goes here - it s simple
                 if randnum() < self.capture_prob[self.LEFs[lef, leg], leg]: # try to capture the leg
-                    self.statuses[lef, leg] = STATUS_CAPTURED
+                    if self.statuses[lef, leg] != STATUS_INACTIVE:  # if it's not inactive we can capture it
+                        self.statuses[lef, leg] = STATUS_CAPTURED
                 if randnum() < self.release_prob[self.LEFs[lef, leg]]: # try to release the leg
-                    self.statuses[lef, leg] = STATUS_MOVING  # We are now moving
+                    if self.statuses[lef, leg] == STATUS_CAPTURED:  # if it's captured we can release it
+                        self.statuses[lef, leg] = STATUS_MOVING
 
                 # moving logic is somewhat more complicated
                 pos = self.LEFs[lef, leg]

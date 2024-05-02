@@ -248,9 +248,12 @@ cdef class LEFSimulator(object):
         self.max_events = max_events  # Store the maximum events allowed
 
 
-    def get_events(self): 
+    def get_events(self, reset=False): 
         ar = np.array(self.events)
-        return ar[:self.event_number]  
+        event_num = self.event_number  # cache event number
+        if reset:            
+            self.event_number = 0
+        return ar[:event_num]  
 
     # Internal functions next. They are called by the public functions to do the actual logic of the simulation.
 

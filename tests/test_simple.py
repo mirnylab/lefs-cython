@@ -380,3 +380,7 @@ def test_watches():
     LEF.steps_watch(0, 100)
     events = LEF.get_events()
     assert len(events) == 200  # all watches happened - 2 LEFs for 100 steps
+    events = LEF.get_events(reset=True)
+    assert len(events) == 200 # still 200 
+    events = LEF.get_events()  # now it should be reset 
+    assert len(events) == 0  # all events are reset

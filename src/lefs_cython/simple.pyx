@@ -1,12 +1,8 @@
 #!python
-#cython: boundscheck=False
-#cython: wraparound=False
-#cython: initializedcheck=False
-
+# cython: boundscheck=False, wraparound=False, nonecheck=False, initializedcheck=False
 
 import numpy as np
 cimport numpy as cnp
-
 import cython
 cimport cython
 
@@ -19,35 +15,30 @@ ctypedef cnp.npy_bool bool_t
 int_t_np = np.int32
 float_t_np = np.float32
 
-
-
 cdef extern from "<stdlib.h>":
     double drand48()
 
-@cython.exceptval(check=False)
 cdef float_t randnum() noexcept:
     return <float_t>drand48()
 
 # LEF statuses
-cdef int_t NUM_STATUSES = 5 # moving, paused, bound
+cdef int_t NUM_STATUSES = 5  # moving, paused, bound
 cdef int_t STATUS_MOVING = 0  # LEF moved last time
 cdef int_t STATUS_PAUSED = 1  # LEF failed to move the last step because it was paused
-cdef int_t STATUS_STALLED = 2 # LEF failed to move the last step because it was stalled at another LEF or boundary
-cdef int_t STATUS_CAPTURED = 3   # LEF is bound by CTCF and cannot move
+cdef int_t STATUS_STALLED = 2  # LEF failed to move the last step because it was stalled at another LEF or boundary
+cdef int_t STATUS_CAPTURED = 3  # LEF is bound by CTCF and cannot move
 cdef int_t STATUS_INACTIVE = 4  # A leg is inactive and cannot move
-# Could add more statuses e.g. the leg is "resting" because only one leg can move at a time
-# but this is the case for a more complicated thing
 
 # occipied array statuses
 cdef int_t OCCUPIED_FREE = -2
 cdef int_t OCCUPIED_BOUNDARY = -1
 
 # move policies
-cdef int_t MOVE_POLICY_BOTH = 0 # both legs can move
-cdef int_t MOVE_POLICY_ALTERNATE = 1 # only one leg can move at a time, alternating between legs with a given rate
-cdef int_t MOVE_POLICY_ONELEG_RANDOM = 2 # only one leg can move at a time, and it's a random leg
+cdef int_t MOVE_POLICY_BOTH = 0  # both legs can move
+cdef int_t MOVE_POLICY_ALTERNATE = 1  # only one leg can move at a time, alternating between legs with a given rate
+cdef int_t MOVE_POLICY_ONELEG_RANDOM = 2  # only one leg can move at a time, and it's a random leg
 
-# a limitation of Cython - we cannot share constants between Cython and Python, so we need to define them in Python as a dict
+# a limitation of Cython - can't share constants between Cython and Python, so need to define them in Python as a dict
 constants = {}
 constants['NUM_STATUSES'] = NUM_STATUSES
 constants['STATUS_MOVING'] = STATUS_MOVING
@@ -60,7 +51,6 @@ constants['OCCUPIED_BOUNDARY'] = OCCUPIED_BOUNDARY
 constants['MOVE_POLICY_BOTH'] = MOVE_POLICY_BOTH
 constants['MOVE_POLICY_ALTERNATE'] = MOVE_POLICY_ALTERNATE
 constants['MOVE_POLICY_ONELEG_RANDOM'] = MOVE_POLICY_ONELEG_RANDOM
-
 
 
 cdef class LEFSimulator(object):
@@ -84,7 +74,7 @@ cdef class LEFSimulator(object):
     pause_prob : array-like (N)
         An array of probabilities of pausing a LEF at each position
     skip_load : bool
-        If True, the LEFs are not loaded at the start of the simulation. Default is False (load LEFs randomly at the start of the simulation)
+        If True, the LEFs are not loaded at the start of the simulation. Default is False (load randomly).
 
     Attributes
     ----------
@@ -104,12 +94,10 @@ cdef class LEFSimulator(object):
     watches : array-like
         An array of the positions that are watched
 
-    Methods
-    -------
-    steps(step_start, step_end)
-        Perform a number of steps
-    steps_watch(step_start, step_end)
-        Perform a number of steps and watch the positions of the LEFs
+    Public Methods
+    --------------
+    steps(step_start, step_end, watch=False)
+        Perform a number of steps, optionally watching the positions of the LEFs
     set_watches(watch_array, max_events)
         Set the watches for the simulation
     get_events()
@@ -118,13 +106,15 @@ cdef class LEFSimulator(object):
         Get the occupied positions
     get_LEFs()
         Get the positions of the LEFs
-
-
+    get_statuses()
+        Get the statuses of the LEFs
+    force_load_LEFs(positions, statuses=None)
+        Force the LEFs to specific positions with matching statuses (optional) - for debug/testing
     """
     cdef int_t N
     cdef int_t NLEFs
     # user defined arrays - unload (load is not needed because cumulatively loaded probabilities are used)
-    cdef float_t [:,::1] unload_prob
+    cdef float_t [:, ::1] unload_prob
     # user defined arrays - CTCF interactions
     cdef float_t [:, ::1] capture_prob
     cdef float_t [::1] release_prob
@@ -135,33 +125,45 @@ cdef class LEFSimulator(object):
     cdef int_t [:, ::1] statuses
     cdef int_t [::1] occupied
 
+    # load cache and related arrays
     cdef int_t load_cache_length
     cdef int_t load_cache_position
     cdef int_t [::1] load_pos_array
 
+    # events and watches relsated stuff
     cdef int_t [:, ::1] events
     cdef int_t [::1] watch_mask
     cdef int_t event_number
     cdef int_t max_events
 
+    # Policies and global attributes like probabilities
     cdef int_t move_policy
     cdef float_t alternate_prob
 
-
-
-    def __init__(self, NLEFs, N,  load_prob, unload_prob, capture_prob, release_prob, pause_prob,
-    skip_load = False, move_policy = MOVE_POLICY_BOTH, alternate_prob = 0.01):
+    def __init__(
+        self,
+        NLEFs,
+        N,
+        load_prob,
+        unload_prob,
+        capture_prob,
+        release_prob,
+        pause_prob,
+        skip_load=False,
+        move_policy=MOVE_POLICY_BOTH,
+        alternate_prob=0.01,
+    ):
         """
-        Initialize the class with the probabilities of loading, unloading, captureing, releaseing, and pausing
+        Initialize the class with the probabilities of loading, unloading, capturing, releasing, and pausing
         """
         # safety checks so that we don't accidentally load/unload at the boundaries
         load_prob[0:2] = 0
-        load_prob[len(load_prob)-2:len(load_prob)] = 0
+        load_prob[len(load_prob) - 2 : len(load_prob)] = 0
 
         # cumulative load_prob arrays for cached load_prob function
         cum_load_prob = np.cumsum(load_prob)
-        cum_load_prob = cum_load_prob / float(cum_load_prob[len(cum_load_prob)-1])
-        self.load_prob_cumulative = np.array(cum_load_prob, float_t_np, order = "C")
+        cum_load_prob = cum_load_prob / float(cum_load_prob[len(cum_load_prob) - 1])
+        self.load_prob_cumulative = np.array(cum_load_prob, float_t_np, order="C")
 
         self.NLEFs = NLEFs
         self.N = N
@@ -188,11 +190,11 @@ cdef class LEFSimulator(object):
         self.unload_prob = np.array(unload_prob, order="C", dtype=float_t_np)
         self.pause_prob = np.array(pause_prob, order="C", dtype=float_t_np)
 
-        self.LEFs = np.zeros((self.NLEFs, 2), dtype = int_t_np, order = "C")
-        self.statuses = np.full((self.NLEFs, 2), STATUS_MOVING, dtype = int_t_np, order = "C")
+        self.LEFs = np.zeros((self.NLEFs, 2), dtype=int_t_np, order="C")
+        self.statuses = np.full((self.NLEFs, 2), STATUS_MOVING, dtype=int_t_np, order="C")
 
         # some safety things for occupied array
-        self.occupied = np.full(self.N, OCCUPIED_FREE, dtype = int_t_np, order = "C")
+        self.occupied = np.full(self.N, OCCUPIED_FREE, dtype=int_t_np, order="C")
         self.occupied[0] = OCCUPIED_BOUNDARY
         self.occupied[self.N - 1] = OCCUPIED_BOUNDARY
 
@@ -207,7 +209,6 @@ cdef class LEFSimulator(object):
         self.alternate_prob = alternate_prob
 
     # Public functions first. They actually call private functions to do the work.
-
     def get_occupied(self):
         return np.array(self.occupied)
 
@@ -217,7 +218,7 @@ cdef class LEFSimulator(object):
     def get_LEFs(self):
         return np.array(self.LEFs)
 
-    def force_load_LEFs(self, positions, statuses = None):
+    def force_load_LEFs(self, positions, statuses=None):
         """
         A function used for testing: forces LEFs to specific positions with matching occupied array
         """
@@ -225,7 +226,7 @@ cdef class LEFSimulator(object):
         if positions.shape != (self.NLEFs, 2):
             raise ValueError("Positions must be of length NLEFs * 2")
         if statuses is None:
-            statuses = np.full((self.NLEFs, 2), STATUS_MOVING, dtype = int_t_np, order = "C")
+            statuses = np.full((self.NLEFs, 2), STATUS_MOVING, dtype=int_t_np, order="C")
         else:
             if statuses.shape != (self.NLEFs, 2):
                 raise ValueError("Statuses must be of shape NLEFs x 2")
@@ -235,7 +236,7 @@ cdef class LEFSimulator(object):
                 self.occupied[positions[lef, leg]] = lef + self.NLEFs * leg
                 self.statuses[lef, leg] = statuses[lef, leg]
 
-    def steps(self,step_start, step_end, watch=False):
+    def steps(self, step_start, step_end, watch=False):
         """
         Perform a number of steps, and watch the positions of the LEFs.
         This function optionally activates the watches.
@@ -257,34 +258,38 @@ cdef class LEFSimulator(object):
         A function to alternate the legs that can move.
 
         * If one of the legs is CTCF bound, then the other will be assigned to move
-        * If one of the legs is inactive, then with a given probability it will activate and the other will become inactive
+        * If one of the legs is inactive, then with a given probability it activates and the other becomes inactive
 
-        A choice of one leg is moving when the other is on a CTCF makes sense - it allows for faster exploration and we talked about it.
-        However, the question was what to do with stalled legs. But here we enter an unpleasant problem of how do legs resolve collisions.
+        A choice of one leg is moving when the other is on a CTCF makes sense.
+        It allows for faster exploration and we talked about it.
+        However, the question was what to do with stalled legs.
+        But here we enter an unpleasant problem of how do legs resolve collisions.
 
-        There is a world in which a LEF is stalled at another LEF, and keeps trying to pass through it - while also being more vulnerable to unloading.
-        Imagine that we assigned the non-stalled leg to be active, and the stalled leg is inactive. Is a LEF still vulnerable to unloading? Is it still stalled?
-        If the stalled leg is inactive, then a LEF (in an actual physical world, a molecule of cohesin) won't be trying to move in the direction of the cohesin it is stalled against.
-        Would it be more likely to be unloaded then? If we want it to be more likely to be unloaded, we have to assume it "keeps trying" to move, and is more vulnerable to unloading.
-
-        So here we choose
+        There is a world in which a LEF is stalled at another LEF, and keeps trying to pass through it
+        while also being more vulnerable to unloading.
+        Imagine that we assigned the non-stalled leg to be active, and the stalled leg is inactive.
+        Is a LEF still vulnerable to unloading? Is it still stalled?
+        If the stalled leg is inactive, then a LEF (in an actual physical world, a molecule of cohesin)
+        won't be trying to move in the direction of the cohesin it is stalled against.
+        Would it be more likely to be unloaded then?
+        If we want increased unloading, we have to assume it "keeps trying", and is more vulnerable to unloading.
         """
-        cdef int_t lef, leg
-        cdef bool_t leg1_bound, leg2_bound, leg1_inactive, leg2_inactive
+        cdef int_t lef
+        cdef bool_t leg0_bound, leg1_bound, leg0_inactive, leg1_inactive
         for lef in range(self.NLEFs):
-            leg0_bound = (self.statuses[lef, 0] == STATUS_CAPTURED) # | (self.statuses[lef, 0] == STATUS_STALLED) not actually touching stalled
-            leg1_bound = (self.statuses[lef, 1] == STATUS_CAPTURED) # | (self.statuses[lef, 1] == STATUS_STALLED)
+            leg0_bound = (self.statuses[lef, 0] == STATUS_CAPTURED)  # not actually touching stalled
+            leg1_bound = (self.statuses[lef, 1] == STATUS_CAPTURED)
             leg0_inactive = (self.statuses[lef, 0] == STATUS_INACTIVE)
             leg1_inactive = (self.statuses[lef, 1] == STATUS_INACTIVE)
             if leg0_bound & leg1_bound:
                 continue  # both legs bound, nothing to do
-            elif leg0_bound | leg1_bound: # one leg can't move - another can't be inactive
+            elif leg0_bound | leg1_bound:  # one leg can't move - another can't be inactive
                 if leg0_inactive:
                     self.statuses[lef, 0] = STATUS_MOVING
                 if leg1_inactive:
                     self.statuses[lef, 1] = STATUS_MOVING
                 continue  # one leg bound - no swapping or reassignment, continuing
-            else: # none of the legs are bound (captured that is)
+            else:  # none of the legs are bound (captured that is)
                 # This will happen e.g. if one leg became released, or at the start
                 if not (leg1_inactive | leg0_inactive):  # one leg has to be made inactive
                     self.statuses[lef, 0 if randnum() > 0.5 else 1] = STATUS_INACTIVE
@@ -297,12 +302,10 @@ cdef class LEFSimulator(object):
                     self.statuses[lef, 1] = STATUS_MOVING
                     self.statuses[lef, 0] = STATUS_INACTIVE
 
-
-
     def set_watches(self, watch_array, max_events=100000):
         """
         Set the watches for the simulation.
-        The watches are positions in the array that trigger an event when both legs of a LEF are at the watched position.
+        The watches are positions in the array that trigger an event when both legs of a LEF are at watched positions.
         The events are stored in the events array, which can be accessed with get_events().
 
         Parameters:
@@ -322,10 +325,9 @@ cdef class LEFSimulator(object):
                 raise ValueError("Watch position is out of bounds.")
 
         # Initialize the events array to store events. Each event records the position of both legs and the time.
-        self.events = np.zeros((max_events, 3), dtype=int_t_np, order = "C")  # Each event is stored as [pos1, pos2, time].
+        self.events = np.zeros((max_events, 3), dtype=int_t_np, order="C")  # Each event stored as [pos1, pos2, time].
         self.event_number = 0  # Reset the event number counter.
         self.max_events = max_events  # Store the maximum events allowed
-
 
     def get_events(self, reset=False):
         ar = np.array(self.events)
@@ -335,10 +337,9 @@ cdef class LEFSimulator(object):
         return ar[:event_num]
 
     # Internal functions next. They are called by the public functions to do the actual logic of the simulation.
-
     cdef watch(self, int_t time):
         """
-        An internal method to watch the positions of the LEFs and trigger events when both legs are at a watched position.
+        An internal method to trigger events when both legs are at a watched position.
         """
         cdef int_t lef
         for lef in range(self.NLEFs):
@@ -349,7 +350,6 @@ cdef class LEFSimulator(object):
                 self.event_number += 1
             if self.event_number == self.max_events:
                 raise ValueError("Events are full - increase max_events")
-
 
     cdef load_lef(self, cython.int lef):
         """
@@ -363,15 +363,20 @@ cdef class LEFSimulator(object):
                 print("Ignoring load_prob at 0 or end. load_prob at:", pos)
                 continue
 
-            if (self.occupied[pos-1] != OCCUPIED_FREE) | (self.occupied[pos] != OCCUPIED_FREE) | (self.occupied[pos+1] != OCCUPIED_FREE):
-                continue  # checking all 3 positions for consistency and to avoid a LEF being born around another LEF's leg
+            # checking all 3 positions for consistency and to avoid a LEF being born around another LEF's leg
+            if (
+                self.occupied[pos - 1] != OCCUPIED_FREE
+                or self.occupied[pos] != OCCUPIED_FREE
+                or self.occupied[pos + 1] != OCCUPIED_FREE
+            ):
+                continue
 
             # Need to make LEFs of different sizes - 1 or 2 wide, to avoid checkering in the contact map
             leflen = 2 if randnum() > 0.5 else 1  # 1 or 2 wide LEF at loading
             for leg in range(2):
-                self.LEFs[lef, leg] = pos - 1 + leg * leflen  #[pos-1, pos] or [pos-1, pos+1]
+                self.LEFs[lef, leg] = pos - 1 + leg * leflen  # [pos-1, pos] or [pos-1, pos+1]
                 self.statuses[lef, leg] = STATUS_MOVING
-                self.occupied[pos - 1 + leg * leflen] = lef + self.NLEFs *leg  # record which LEF is there and which leg
+                self.occupied[pos - 1 + leg * leflen] = lef + self.NLEFs * leg  # record which LEF/leg is there
             break
 
     cdef unload(self):
@@ -379,15 +384,15 @@ cdef class LEFSimulator(object):
         cdef int_t lef, leg, s1, s2
         cdef float_t unload, unload1, unload2
 
-        for lef in range(self.NLEFs): # check all LEFs
+        for lef in range(self.NLEFs):  # check all LEFs
             s1 = self.statuses[lef, 0]
             s2 = self.statuses[lef, 1]
-            unload1 = self.unload_prob[self.LEFs[lef, 0], self.statuses[lef,0]]
-            unload2 = self.unload_prob[self.LEFs[lef, 1], self.statuses[lef,1]]
+            unload1 = self.unload_prob[self.LEFs[lef, 0], self.statuses[lef, 0]]
+            unload2 = self.unload_prob[self.LEFs[lef, 1], self.statuses[lef, 1]]
 
             # logic for releaseing - subject to change
             if s1 == s2:  # same statuses for both legs
-                unload = (unload1 + unload2) / 2   # just take the mean of probabilities - each leg unloads "independently"
+                unload = (unload1 + unload2) / 2  # take the mean of probabilities - each leg unloads "independently"
 
             # This is the only exception, and that is because CTCF protects "the whole thing", not just one leg
             elif s1 == STATUS_CAPTURED or s2 == STATUS_CAPTURED:  # one leg is at CTCF, another is not
@@ -395,25 +400,34 @@ cdef class LEFSimulator(object):
 
             # Treating paused and stalled the same way - each leg is independent
             elif s1 == STATUS_STALLED or s2 == STATUS_STALLED:  # one leg stalled another moving or paused
-                unload = (unload1+unload2) / 2  # take the mean, which means higher prob if stalled leg is unloaded faster
+                unload = (unload1 + unload2) / 2  # take the mean, higher prob if stalled leg is unloaded faster
             elif s1 == STATUS_PAUSED or s2 == STATUS_PAUSED:  # one leg paused another moving
-                unload = (unload1+unload2) / 2  # take the mean, which means higher prob if paused leg is unloaded faster
+                unload = (unload1 + unload2) / 2  # take the mean, higher prob if paused leg is unloaded faster
             else:
-                raise ValueError("Today 2+2 = -5e452, the number of atoms in the universe is negative, and the bugs are all out.")
+                raise ValueError(
+                    "Today 2+2 = -5e452, the number of atoms in the universe is negative, and the bugs are all out."
+                )
 
             if randnum() < unload:
-                for leg in range(2): # statuses are re-initialized in load, occupied here
+                for leg in range(2):  # statuses are re-initialized in load, occupied here
                     self.occupied[self.LEFs[lef, leg]] = OCCUPIED_FREE
                 self.load_lef(lef)
 
     cdef int_t get_cached_load_position(self):
         """
         An internal method to get a cached load position.
-        This is necessary because the load position is obtained by binary search, and we don't want to call np.searchsorted() every time.
+        This is necessary because the load position is obtained by binary search,
+        and we don't want to call np.searchsorted() every time.
         """
 
         if self.load_cache_position >= self.load_cache_length - 1:
-            foundArray = np.array(np.searchsorted(self.load_prob_cumulative, np.random.random(self.load_cache_length)), dtype=int_t_np, order = "C")
+            foundArray = np.array(
+                np.searchsorted(
+                    self.load_prob_cumulative, np.random.random(self.load_cache_length)
+                ),
+                dtype=int_t_np,
+                order="C",
+            )
             self.load_pos_array = foundArray
             self.load_cache_position = -1
         self.load_cache_position += 1
@@ -436,31 +450,30 @@ cdef class LEFSimulator(object):
                 leg = leg_ind if swap_order else 1 - leg_ind
 
                 # capture and release logic goes here - it s simple
-                if randnum() < self.capture_prob[self.LEFs[lef, leg], leg]: # try to capture the leg
-                    if self.statuses[lef, leg] != STATUS_INACTIVE:  # if it's not inactive we can capture it
+                if randnum() < self.capture_prob[self.LEFs[lef, leg], leg]:  # try to capture the leg
+                    # if it's not inactive we can capture it
+                    if self.statuses[lef, leg] != STATUS_INACTIVE:
                         self.statuses[lef, leg] = STATUS_CAPTURED
-                if randnum() < self.release_prob[self.LEFs[lef, leg]]: # try to release the leg
+                if randnum() < self.release_prob[self.LEFs[lef, leg]]:  # try to release the leg
                     if self.statuses[lef, leg] == STATUS_CAPTURED:  # if it's captured we can release it
                         self.statuses[lef, leg] = STATUS_MOVING
 
                 # moving logic is somewhat more complicated
                 pos = self.LEFs[lef, leg]
                 # check if "this" leg is captured or inactive - attempt a move i fit's not
-                if (self.statuses[lef, leg] != STATUS_CAPTURED) and (self.statuses[lef, leg] != STATUS_INACTIVE):
+                if  self.statuses[lef, leg] != STATUS_CAPTURED and self.statuses[lef, leg] != STATUS_INACTIVE:
                     newpos = pos + (2 * leg - 1)  # leg 1 moves "right" - increasing numbers
-                    if (self.occupied[newpos] == OCCUPIED_FREE): # Can we go there?
-                        if  (randnum() > self.pause_prob[pos]) : # check if we are paused
+                    if self.occupied[newpos] == OCCUPIED_FREE:  # Can we go there?
+                        if randnum() > self.pause_prob[pos]:  # check if we are paused
                             # The leg can move, so we need to update the arrays
                             self.occupied[newpos] = lef + self.NLEFs * leg  # update occupied array
                             self.occupied[pos] = OCCUPIED_FREE  # free the old position
-                            self.LEFs[lef, leg] = newpos   # update position of leg
-                            self.statuses[lef,leg] = STATUS_MOVING  # we are moving now!
-
+                            self.LEFs[lef, leg] = newpos  # update position of leg
+                            self.statuses[lef, leg] = STATUS_MOVING  # we are moving now!
                             # for policy ALTERNATE we don't need this, because one of the two legs is inactive or bound.
                             if self.move_policy == MOVE_POLICY_ONELEG_RANDOM:
-                                continue # this leg moved, we don't attempt the other leg
-
-                        else: # we are paused - can't move
-                            self.statuses[lef,leg] = STATUS_PAUSED  # we are paused because of the pause probability
-                    else: # we are stalled - can't move
-                        self.statuses[lef,leg] = STATUS_STALLED  # we are stalled because other position is occupied
+                                continue  # this leg moved, we don't attempt the other leg
+                        else:  # we are paused - can't move
+                            self.statuses[lef, leg] = STATUS_PAUSED  # we are paused because of the pause probability
+                    else:  # we are stalled - can't move
+                        self.statuses[lef, leg] = STATUS_STALLED  # we are stalled because other position is occupied

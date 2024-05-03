@@ -402,19 +402,20 @@ def test_pause_statistics():
     release_array = np.zeros(N) # no release
     pause_array = np.ones(N)*p  # uniform pausing probability
 
-    occupied = []
-
     sim = LEFSimulator(N_LEFS, N, load_array, unload_array, capture_array, release_array, pause_array, skip_load=False)
 
+    # run the simulation for N steps and record the LEF positions. The LEF shouldn't hit the boundaries
     T = N
     pos = []
-    occ = []
     sim.steps(0, 1)
     for i in range(T):
         sim.steps(i, i+1)
         pos.append(sim.get_LEFs())
     pos = np.array(pos)
-    #leg0 pausing statistics
-    average_increments = np.abs(np.diff(pos[:, 0, 0]).sum()/N)
 
+    #compute leg0 and leg1 increments average and assert that it is within 5 standard deviations of 1-p
+    average_increments = np.abs(np.diff(pos[:, 0, 0]).sum()/N)
+    assert 0.8 - 5*np.sqrt(p*(1-p)/N) <= 1 - average_increments <= 0.8 + 5*np.sqrt(p*(1-p)/N)
+    
+    average_increments = np.abs(np.diff(pos[:, 0, 1]).sum()/N)
     assert 0.8 - 5*np.sqrt(p*(1-p)/N) <= 1 - average_increments <= 0.8 + 5*np.sqrt(p*(1-p)/N)

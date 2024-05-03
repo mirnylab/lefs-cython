@@ -416,6 +416,7 @@ def test_pause_statistics():
     #compute leg0 and leg1 increments average and assert that it is within 5 standard deviations of 1-p
     average_increments = np.abs(np.diff(pos[:, 0, 0]).sum()/N)
     assert 0.8 - 5*np.sqrt(p*(1-p)/N) <= 1 - average_increments <= 0.8 + 5*np.sqrt(p*(1-p)/N)
-    
+
     average_increments = np.abs(np.diff(pos[:, 0, 1]).sum()/N)
     assert 0.8 - 5*np.sqrt(p*(1-p)/N) <= 1 - average_increments <= 0.8 + 5*np.sqrt(p*(1-p)/N)
+    

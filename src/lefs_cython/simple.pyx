@@ -360,7 +360,7 @@ cdef class LEFSimulator(object):
         while True:
             pos = self.get_cached_load_position()
             if pos >= self.N - 2 or pos <= 1:  # N-1 is a boundary, we need to be N-4 to fit a 2-wide LEF
-                print("Ignoring load_prob at 0 or end. load_prob at:", pos)
+                # print("Ignoring load_prob at 0 or end. load_prob at:", pos)
                 continue
 
             # checking all 3 positions for consistency and to avoid a LEF being born around another LEF's leg

@@ -609,6 +609,7 @@ cdef class LEFSimulator(object):
 
         # initialize the distances from the start to the start anchors
         # This is basically "two searches in one" - from the anchors on the two sides of the start
+        # note negative distances because we use a max heap
         if i_start_left != -1 and dist_start_left < self.djikstra_dist[i_start_left]:
             self.djikstra_dist[i_start_left] = dist_start_left
             pq.push(pair[float_t,int_t](-dist_start_left, i_start_left))
@@ -639,6 +640,10 @@ cdef class LEFSimulator(object):
             if cur_dist + anchor_end_dist < best_dist:  # we reach the end faster than current best distance
                 best_dist = cur_dist + anchor_end_dist  # update the best distance
 
+
+            # Note that we don't use (pos_view[u] - end) below because we might have jumped far away through a LEF
+            # But the next LEF might bring us closer to the end again. 
+            # So we keep track of just distance from the start (either of the starting LEFs) to the current node
             for k in range(3):  # iterating over 3 neighbors - left, right, shortcut
                 v = self.lef_neigh_pos[u, k]
                 new_dist = cur_dist + self.lef_neigh_dist[u, k]
@@ -675,12 +680,14 @@ cdef class LEFSimulator(object):
         cdef int_t size = self.NLEFs * 2        
 
         # flatten LEF positions with memcpy, sort with std sort
+        # Tested that std sort is faster than np.ndarray.sort() for up to 100k elements
+        # and memcpy avoids any calls to Python
         memcpy(&self.lefs_pos_flat_sorted[0], &self.LEFs[0,0], size * sizeof(int_t))
         sort(&self.lefs_pos_flat_sorted[0], &self.lefs_pos_flat_sorted[0] + size)
 
-        # set direct neighbors
+        # set neighbors for each LEF anchor
         for i in range(size):            
-            # prev neighbor
+            # previous neighbor
             if i > 0:
                 self.lef_neigh_pos[i, 0] = i - 1
                 self.lef_neigh_dist[i, 0] = self.lefs_pos_flat_sorted[i] - self.lefs_pos_flat_sorted[i - 1]
@@ -697,7 +704,8 @@ cdef class LEFSimulator(object):
                 self.lef_neigh_dist[i, 1] = 1e6
 
         # shortcuts: each LEF creates a bidirectional shortcut between its two legs
-        for lef_ind in range(size):
+        # TODO: rewrite it with a different sort, so that we can avoid the binary search
+        for lef_ind in range(size):  # iterate over all LEF legs
             # going "direct" through occupied array            
             pos = self.lefs_pos_flat_sorted[lef_ind]
             occval = self.occupied[pos]

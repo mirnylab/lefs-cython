@@ -14,8 +14,8 @@ ctypedef np.float32_t float_t
 ctypedef np.npy_bool bool_t
 ctypedef np.int64_t int64_t  # for searchsorted output
 
-
-from libc.stdlib cimport qsort
+from libcpp.algorithm cimport sort
+from libc.string cimport memcpy
 from libc.stdint cimport int32_t
 
 cdef extern from "stddef.h":
@@ -76,6 +76,20 @@ cdef inline (int_t, int_t) find_adjacent_anchors(float_t x, int_t[::1] arr, int_
 
     return left_idx, right_idx
 
+
+# simple binary search of existing value in an int_t array - assumes the value exists.
+cdef inline int_t binary_search(int_t[::1] arr, int_t size, int_t target) noexcept nogil:
+    cdef int_t left = 0
+    cdef int_t right = size
+    cdef int_t mid
+
+    while left < right:
+        mid = (left + right) >> 1
+        if arr[mid] < target:
+            left = mid + 1
+        else:
+            right = mid
+    return left
 
 
 # a limitation of Cython - can't share constants between Cython and Python, so need to define them in Python as a dict
@@ -180,12 +194,10 @@ cdef class LEFSimulator(object):
     cdef int_t max_events
 
     # arrays needed for djikstra calculations
-    cdef int_t [::1] lefs_pos_flat
     cdef int_t [::1] lefs_pos_flat_sorted
-    cdef int64_t [::1] lefs_inds_flat_sorted
-    cdef int64_t [::1] lefs_inds_flat_sorted_inverse
     cdef int_t [:, ::1] lef_neigh_pos
     cdef float_t [:, ::1] lef_neigh_dist
+    cdef float_t [::1] djikstra_dist
 
     # Policies and global attributes like probabilities
     cdef int_t move_policy
@@ -251,11 +263,11 @@ cdef class LEFSimulator(object):
         self.occupied[0] = OCCUPIED_BOUNDARY
         self.occupied[self.N - 1] = OCCUPIED_BOUNDARY
 
-        # dijkstra related arrays - 2x NLEF long
-        self.lefs_pos_flat = np.zeros(self.NLEFs * 2, dtype=int_t_np, order="C")
+        # dijkstra related arrays - 2x NLEF long. Pre-allocating them now.
         self.lef_neigh_pos = np.zeros((self.NLEFs * 2, 3), dtype=int_t_np, order="C")
         self.lef_neigh_dist = np.zeros((self.NLEFs * 2, 3), dtype=float_t_np, order="C")
         self.lefs_pos_flat_sorted = np.zeros(self.NLEFs * 2, dtype=int_t_np, order="C")
+        self.djikstra_dist = np.zeros(self.NLEFs * 2, dtype=float_t_np, order="C")
 
         # cache related things
         self.load_cache_length = 4096 * 4
@@ -540,167 +552,136 @@ cdef class LEFSimulator(object):
                         self.statuses[lef, leg] = STATUS_STALLED  # we are stalled because other position is occupied
 
     def compute_pair_distances(self,
-                            np.ndarray[float_t, ndim=1] starts,
-                            np.ndarray[float_t, ndim=1] ends,
-                            float_t lef_length):
+                            float_t start,
+                            float_t end
+                            ):
         """
-        Compute the distances between pairs of positions using Dijkstra's algorithm.
+        Compute the distances between two  positions using Dijkstra's algorithm.
+
+        IMPORTANT: need to call populate_dijkstra_arrays before calling this function
 
         Parameters
         ----------
-        starts : np.ndarray[float32]
-            The starting positions of the queries
-        ends : np.ndarray[float32]
-            The ending positions of the queries
-        lef_length : float
-            The length of the LEFs
+        start : float
+            The start position
+        end : float
+            The end position
 
         Returns
         -------
-        np.ndarray[float32]
-            The distances between the pairs of positions
+        float
+            The distance between the two positions through the LEF graph
         """
 
-        cdef int_t nqueries = starts.shape[0]
+        
         cdef int_t size = self.lefs_pos_flat_sorted.shape[0]
         cdef float_t INF = 1e10
         cdef int_t i, i_start_left, i_start_right, i_end_left, i_end_right
         cdef float_t direct_dist, best_anchor_bridge
         cdef float_t dist_start_left, dist_start_right, dist_end_left, dist_end_right
-        cdef float_t start_v, end_v, anchor_end_dist, new_dist, cur_dist, best_dist
+        cdef float_t  anchor_end_dist, new_dist, cur_dist, best_dist
         cdef int_t u, v, k
 
-        cdef float_t[::1] starts_view = starts
-        cdef float_t[::1] ends_view = ends
         cdef int_t[::1] pos_view = self.lefs_pos_flat_sorted
-
-        cdef np.ndarray[float_t, ndim=1] results = np.zeros(nqueries, dtype=float_t_np, order='C')
-        cdef float_t[::1] results_view = results
-
-        self.populate_dijkstra_arrays(lef_length)
-
-        # dist array reused for each query
-        dist = np.zeros(size, dtype=float_t_np, order='C')
-        cdef float_t[::1] dist_view = dist
         cdef priority_queue[pair[float_t, int_t]] pq
 
         # define a helper function for adjacent anchors
         # assume find_adjacent_anchors is defined as before
+        
+        direct_dist = abs(end - start)
+        # find the closest anchors to the start and end
+        i_start_left, i_start_right = find_adjacent_anchors(start, pos_view, size)
+        i_end_left, i_end_right = find_adjacent_anchors(end, pos_view, size)
 
-        for i in range(nqueries):
-            pq = priority_queue[pair[float_t,int_t]]()  # priority queue for Dijkstra
-            start_v = starts_view[i]
-            end_v = ends_view[i]
-            direct_dist = abs(end_v - start_v)
+        # calculate the distances to the start and end anchors
+        dist_start_left = (start - pos_view[i_start_left]) if i_start_left != -1 else INF
+        dist_start_right = (pos_view[i_start_right] - start) if i_start_right != -1 else INF
+        dist_end_left = (end - pos_view[i_end_left]) if i_end_left != -1 else INF
+        dist_end_right = (pos_view[i_end_right] - end) if i_end_right != -1 else INF
 
-            # find the closest anchors to the start and end
-            i_start_left, i_start_right = find_adjacent_anchors(start_v, pos_view, size)
-            i_end_left, i_end_right = find_adjacent_anchors(end_v, pos_view, size)
+        # check if we can use direct distance and avoid djikstra
+        best_anchor_bridge = min(dist_start_left + dist_end_left,
+                                dist_start_left + dist_end_right,
+                                dist_start_right + dist_end_left,
+                                dist_start_right + dist_end_right)
 
-            # calculate the distances to the start and end anchors
-            dist_start_left = (start_v - pos_view[i_start_left]) if i_start_left != -1 else INF
-            dist_start_right = (pos_view[i_start_right] - start_v) if i_start_right != -1 else INF
-            dist_end_left = (end_v - pos_view[i_end_left]) if i_end_left != -1 else INF
-            dist_end_right = (pos_view[i_end_right] - end_v) if i_end_right != -1 else INF
+        # if the direct distance is shorter than the best anchor bridge, we can use it
+        if direct_dist <= best_anchor_bridge:
+            return direct_dist            
 
-            # check if we can use direct distance and avoid djikstra
-            best_anchor_bridge = min(dist_start_left + dist_end_left,
-                                    dist_start_left + dist_end_right,
-                                    dist_start_right + dist_end_left,
-                                    dist_start_right + dist_end_right)
+        # initialize the distances from each anchor to INF
+        for k in range(size):
+            self.djikstra_dist[k] = INF            
 
-            # if the direct distance is shorter than the best anchor bridge, we can use it
-            if direct_dist <= best_anchor_bridge:
-                results_view[i] = direct_dist
-                continue
+        # initialize the distances from the start to the start anchors
+        # This is basically "two searches in one" - from the anchors on the two sides of the start
+        if i_start_left != -1 and dist_start_left < self.djikstra_dist[i_start_left]:
+            self.djikstra_dist[i_start_left] = dist_start_left
+            pq.push(pair[float_t,int_t](-dist_start_left, i_start_left))
 
-            # initialize the distances from each anchor to INF
-            for k in range(size):
-                dist_view[k] = INF
+        if i_start_right != -1 and dist_start_right < self.djikstra_dist[i_start_right]:
+            self.djikstra_dist[i_start_right] = dist_start_right
+            pq.push(pair[float_t,int_t](-dist_start_right, i_start_right))
 
-            # initialize the distances from the start to the start anchors
-            # This is basically "two searches in one" - from the anchors on the two sides of the start
-            if i_start_left != -1 and dist_start_left < dist_view[i_start_left]:
-                dist_view[i_start_left] = dist_start_left
-                pq.push(pair[float_t,int_t](-dist_start_left, i_start_left))
+        # initialize the best distance to the direct distance
+        best_dist = direct_dist
 
-            if i_start_right != -1 and dist_start_right < dist_view[i_start_right]:
-                dist_view[i_start_right] = dist_start_right
-                pq.push(pair[float_t,int_t](-dist_start_right, i_start_right))
+        while not pq.empty():  # standard djiikstra - get the closest node
+            top = pq.top()
+            cur_dist = -top.first
+            u = top.second
+            pq.pop()
 
-            # initialize the best distance to the direct distance
-            best_dist = direct_dist
+            if cur_dist > self.djikstra_dist[u]:
+                continue  # we already have a better distance
+            if cur_dist > best_dist:
+                break  # we are further than direct distance - exiting
 
-            while not pq.empty():  # standard djiikstra - get the closest node
-                top = pq.top()
-                cur_dist = -top.first
-                u = top.second
-                pq.pop()
+            anchor_end_dist = abs(pos_view[u] - end)  # distance from current view to the end
+            if cur_dist + anchor_end_dist < best_dist:  # we reach the end faster than current best distance
+                best_dist = cur_dist + anchor_end_dist  # update the best distance
 
-                if cur_dist > dist_view[u]:
-                    continue  # we already have a better distance
-                if cur_dist > best_dist:
-                    break  # we are further than direct distance - exiting
+            for k in range(3):  # iterating over 3 neighbors - left, right, shortcut
+                v = self.lef_neigh_pos[u, k]
+                new_dist = cur_dist + self.lef_neigh_dist[u, k]
+                if new_dist < self.djikstra_dist[v] and new_dist < best_dist:  # we have a better distance
+                    self.djikstra_dist[v] = new_dist
+                    pq.push(pair[float_t,int_t](-new_dist, v))  # push the new distance to the queue
 
-                anchor_end_dist = abs(pos_view[u] - end_v)  # distance from current view to the end
-                if cur_dist + anchor_end_dist < best_dist:  # we reach the end faster than current best distance
-                    best_dist = cur_dist + anchor_end_dist  # update the best distance
-
-                for k in range(3):  # iterating over 3 neighbors - left, right, shortcut
-                    v = self.lef_neigh_pos[u, k]
-                    new_dist = cur_dist + self.lef_neigh_dist[u, k]
-                    if new_dist < dist_view[v] and new_dist < best_dist:  # we have a better distance
-                        dist_view[v] = new_dist
-                        pq.push(pair[float_t,int_t](-new_dist, v))  # push the new distance to the queue
-
-            results_view[i] = min(direct_dist, best_dist) # should always be the best_dist, but just in case
-
-        return results
+        return min(direct_dist, best_dist) # should always be the best_dist, but just in case
+        
 
     def populate_dijkstra_arrays(self, float_t lef_length):
         """
         Populate arrays used by Dijkstra. Called once before computing distances.
 
-        This function populates the following arrays: lefs_pos_flat_sorted, lefs_inds_flat_sorted,
-        lefs_inds_flat_sorted_inverse, lef_neigh_pos, lef_neigh_dist.
-
+        This function populates the following arrays: lefs_pos_flat_sorted, lef_neigh_pos, lef_neigh_dist.
         Each LEF has 3 neighbors: the previous LEF, the next LEF, and a shortcut to the other leg of the same LEF.
+
+        Parameters
+        ----------
+        lef_length : float
+            The length of a LEF
 
         Arrays
         ------
-
-        lefs_pos_flat_sorted : shape (NLEFs * 2)
+        lefs_pos_flat_sorted : shape (NLEFs * 2), int
             The positions of the LEFs sorted in ascending order
-        lefs_inds_flat_sorted : shape (NLEFs * 2)
-            The indices of the LEFs sorted in ascending order
-        lefs_inds_flat_sorted_inverse : shape (NLEFs * 2)
-            The inverse indices of the LEFs sorted in ascending order
-        lef_neigh_pos : shape (NLEFs * 2, 3)
+        lef_neigh_pos : shape (NLEFs * 2, 3), int
             The positions of the neighbors of each LEF
-        lef_neigh_dist : shape (NLEFs * 2, 3)
+        lef_neigh_dist : shape (NLEFs * 2, 3), float
             The distances to the neighbors of each LEF
         """
-        cdef int_t i, lef_ind, lef_ar_ind, lef_ar_ind2, leg
+        cdef int_t i, lef_ind, lef, leg, occval, pos, pos2, lef_ind2
         cdef float_t dist
+        cdef int_t size = self.NLEFs * 2        
 
-        # flatten LEF positions
-        for lef_ind in range(self.NLEFs):
-            for leg in range(2):
-                lef_ar_ind = lef_ind * 2 + leg
-                self.lefs_pos_flat[lef_ar_ind] = self.LEFs[lef_ind, leg]
-
-        # the only non-Cython part - sorting the positions
-        self.lefs_inds_flat_sorted = np.argsort(self.lefs_pos_flat)
-        # we need second argsort to get the inverse indices - we need them for the "other leg" lookup
-        self.lefs_inds_flat_sorted_inverse = np.argsort(self.lefs_inds_flat_sorted)
-
-        # sort the positions using indices
-        for i in range(self.NLEFs * 2):
-            self.lefs_pos_flat_sorted[i] = self.lefs_pos_flat[self.lefs_inds_flat_sorted[i]]
+        # flatten LEF positions with memcpy, sort with std sort
+        memcpy(&self.lefs_pos_flat_sorted[0], &self.LEFs[0,0], size * sizeof(int_t))
+        sort(&self.lefs_pos_flat_sorted[0], &self.lefs_pos_flat_sorted[0] + size)
 
         # set direct neighbors
-        cdef int_t size = self.NLEFs * 2
-        for i in range(size):
+        for i in range(size):            
             # prev neighbor
             if i > 0:
                 self.lef_neigh_pos[i, 0] = i - 1
@@ -718,11 +699,24 @@ cdef class LEFSimulator(object):
                 self.lef_neigh_dist[i, 1] = 1e6
 
         # shortcuts: each LEF creates a bidirectional shortcut between its two legs
-        for lef_ind in range(self.NLEFs):
-            lef_ar_ind = self.lefs_inds_flat_sorted_inverse[2 * lef_ind]
-            lef_ar_ind2 = self.lefs_inds_flat_sorted_inverse[2 * lef_ind + 1]
-            self.lef_neigh_pos[lef_ar_ind, 2] = lef_ar_ind2
-            self.lef_neigh_dist[lef_ar_ind, 2] = lef_length
-            self.lef_neigh_pos[lef_ar_ind2, 2] = lef_ar_ind
-            self.lef_neigh_dist[lef_ar_ind2, 2] = lef_length
+        for lef_ind in range(size):
+            # going "direct" through occupied array            
+            pos = self.lefs_pos_flat_sorted[lef_ind]
+            occval = self.occupied[pos]
+            lef = occval % self.NLEFs  # LEF index
+            leg = occval // self.NLEFs  # leg index
+            # find the position of the other leg
+            pos2 = self.LEFs[lef, 1 - leg]
+            # find the index of the other leg in the sorted array
+            lef_ind2 = binary_search(self.lefs_pos_flat_sorted, size, pos2)            
+            # set the shortcut
+            self.lef_neigh_pos[lef_ind, 2] = lef_ind2
+            self.lef_neigh_dist[lef_ind, 2] = lef_length
+        
 
+    def debug_get_djiikstra_arrays(self):
+        """
+        A debug function to get the Dijkstra arrays for visualization
+        """
+        return np.array(self.lefs_pos_flat_sorted), np.array(self.lef_neigh_pos), np.array(self.lef_neigh_dist), np.array(self.djikstra_dist)
+        

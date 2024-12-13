@@ -581,12 +581,8 @@ cdef class LEFSimulator(object):
         cdef float_t dist_start_left, dist_start_right, dist_end_left, dist_end_right
         cdef float_t  anchor_end_dist, new_dist, cur_dist, best_dist
         cdef int_t u, v, k
-
-        cdef int_t[::1] pos_view = self.lefs_pos_flat_sorted
+        cdef int_t[::1] pos_view = self.lefs_pos_flat_sorted  # shortcut for simplicity of code
         cdef priority_queue[pair[float_t, int_t]] pq
-
-        # define a helper function for adjacent anchors
-        # assume find_adjacent_anchors is defined as before
         
         direct_dist = abs(end - start)
         # find the closest anchors to the start and end
@@ -603,9 +599,7 @@ cdef class LEFSimulator(object):
         best_anchor_bridge = min(dist_start_left + dist_end_left,
                                 dist_start_left + dist_end_right,
                                 dist_start_right + dist_end_left,
-                                dist_start_right + dist_end_right)
-
-        # if the direct distance is shorter than the best anchor bridge, we can use it
+                                dist_start_right + dist_end_right)        
         if direct_dist <= best_anchor_bridge:
             return direct_dist            
 
@@ -628,7 +622,7 @@ cdef class LEFSimulator(object):
 
         while not pq.empty():  # standard djiikstra - get the closest node
             top = pq.top()
-            cur_dist = -top.first
+            cur_dist = -top.first  # minus because we use a max heap
             u = top.second
             pq.pop()
 
@@ -637,6 +631,10 @@ cdef class LEFSimulator(object):
             if cur_dist > best_dist:
                 break  # we are further than direct distance - exiting
 
+            # The array djikstra_dist keeps distances from the start to the current node
+            # But best_dist is the best distance from the start to the end
+            # we compare cur_dist + ancor_end_dist to best_dist to see if we can exit early
+            # But when we update best_dist, we track distances from start to the current node, not the end
             anchor_end_dist = abs(pos_view[u] - end)  # distance from current view to the end
             if cur_dist + anchor_end_dist < best_dist:  # we reach the end faster than current best distance
                 best_dist = cur_dist + anchor_end_dist  # update the best distance

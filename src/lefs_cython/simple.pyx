@@ -473,7 +473,7 @@ cdef class LEFSimulator(object):
                             self.statuses[lef, leg] = STATUS_MOVING  # we are moving now!
                             # for policy ALTERNATE we don't need this, because one of the two legs is inactive or bound.
                             if self.move_policy == MOVE_POLICY_ONELEG_RANDOM:
-                                continue  # this leg moved, we don't attempt the other leg
+                                break  # this leg moved, we don't attempt the other leg
                         else:  # we are paused - can't move
                             self.statuses[lef, leg] = STATUS_PAUSED  # we are paused because of the pause probability
                     else:  # we are stalled - can't move

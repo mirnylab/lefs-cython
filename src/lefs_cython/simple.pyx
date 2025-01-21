@@ -1,5 +1,5 @@
 #!python
-# cython: boundscheck=False, wraparound=False, nonecheck=False, initializedcheck=False
+# cython: boundscheck=False, wraparound=False, nonecheck=False, initializedcheck=False, cdivision=True
 
 import numpy as np
 cimport numpy as np
@@ -34,9 +34,6 @@ cdef extern from "<stdlib.h>":
 
 cdef float_t randnum() noexcept:
     return <float_t>drand48()
-
-# Global constants
-cdef int_t MERGE_TOUCHING_LEFS = 1  # distance between LEF legs next to each other is 0
 
 # LEF statuses
 cdef int_t NUM_STATUSES = 5  # moving, paused, bound
@@ -657,7 +654,7 @@ cdef class LEFSimulator(object):
         return min(direct_dist, best_dist) # should always be the best_dist, but just in case
         
 
-    def populate_dijkstra_arrays(self, float_t lef_length):
+    def populate_dijkstra_arrays(self, float_t lef_length, int_t merge_touching_lefs):
         """
         Populate arrays used by Dijkstra. Called once before computing distances.
 
@@ -668,6 +665,8 @@ cdef class LEFSimulator(object):
         ----------
         lef_length : float
             The length of a LEF
+        merge_touching_lefs : bool (int)
+            If True, touching LEFs are merged into one
 
         Arrays
         ------
@@ -678,7 +677,7 @@ cdef class LEFSimulator(object):
         lef_neigh_dist : shape (NLEFs * 2, 3), float
             The distances to the neighbors of each LEF
         """
-        cdef int_t i, lef_ind, lef, leg, occval, pos, pos2, lef_ind2
+        cdef int_t i, lef_ind, lef, leg, occval, pos, pos2, lef_ind2, nlefs
         cdef float_t dist
         cdef int_t size = self.NLEFs * 2        
 
@@ -694,7 +693,7 @@ cdef class LEFSimulator(object):
             if i > 0:
                 self.lef_neigh_pos[i, 0] = i - 1
                 dist = self.lefs_pos_flat_sorted[i] - self.lefs_pos_flat_sorted[i - 1]
-                if MERGE_TOUCHING_LEFS and dist == 1:
+                if merge_touching_lefs and dist == 1:
                     dist = 0  # no distance between neighboring LEFs
                 self.lef_neigh_dist[i, 0] = dist
             else:
@@ -705,7 +704,7 @@ cdef class LEFSimulator(object):
             if i < size - 1:
                 self.lef_neigh_pos[i, 1] = i + 1
                 dist = self.lefs_pos_flat_sorted[i + 1] - self.lefs_pos_flat_sorted[i]
-                if MERGE_TOUCHING_LEFS == 1 and dist == 1:
+                if merge_touching_lefs and dist == 1:
                     dist = 0  # no distance between neighboring LEFs
                 self.lef_neigh_dist[i, 1] = dist
             else:
@@ -718,8 +717,9 @@ cdef class LEFSimulator(object):
             # going "direct" through occupied array            
             pos = self.lefs_pos_flat_sorted[lef_ind]
             occval = self.occupied[pos]
-            lef = occval % self.NLEFs  # LEF index
-            leg = occval // self.NLEFs  # leg index
+            nlefs = self.NLEFs
+            lef = occval % nlefs  # LEF index
+            leg = occval // nlefs  # leg index
             # find the position of the other leg
             pos2 = self.LEFs[lef, 1 - leg]
             # find the index of the other leg in the sorted array

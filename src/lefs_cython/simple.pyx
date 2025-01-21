@@ -35,6 +35,9 @@ cdef extern from "<stdlib.h>":
 cdef float_t randnum() noexcept:
     return <float_t>drand48()
 
+# Global constants
+cdef int_t MERGE_TOUCHING_LEFS = 1  # distance between LEF legs next to each other is 0
+
 # LEF statuses
 cdef int_t NUM_STATUSES = 5  # moving, paused, bound
 cdef int_t STATUS_MOVING = 0  # LEF moved last time
@@ -690,7 +693,10 @@ cdef class LEFSimulator(object):
             # previous neighbor
             if i > 0:
                 self.lef_neigh_pos[i, 0] = i - 1
-                self.lef_neigh_dist[i, 0] = self.lefs_pos_flat_sorted[i] - self.lefs_pos_flat_sorted[i - 1]
+                dist = self.lefs_pos_flat_sorted[i] - self.lefs_pos_flat_sorted[i - 1]
+                if MERGE_TOUCHING_LEFS and dist == 1:
+                    dist = 0  # no distance between neighboring LEFs
+                self.lef_neigh_dist[i, 0] = dist
             else:
                 self.lef_neigh_pos[i, 0] = i
                 self.lef_neigh_dist[i, 0] = 1e6  # large distance to avoid going back to yourself
@@ -698,7 +704,10 @@ cdef class LEFSimulator(object):
             # next neighbor
             if i < size - 1:
                 self.lef_neigh_pos[i, 1] = i + 1
-                self.lef_neigh_dist[i, 1] = self.lefs_pos_flat_sorted[i + 1] - self.lefs_pos_flat_sorted[i]
+                dist = self.lefs_pos_flat_sorted[i + 1] - self.lefs_pos_flat_sorted[i]
+                if MERGE_TOUCHING_LEFS == 1 and dist == 1:
+                    dist = 0  # no distance between neighboring LEFs
+                self.lef_neigh_dist[i, 1] = dist
             else:
                 self.lef_neigh_pos[i, 1] = i
                 self.lef_neigh_dist[i, 1] = 1e6

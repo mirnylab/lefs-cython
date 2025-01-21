@@ -5,6 +5,7 @@ import numpy as np
 cimport numpy as cnp
 import cython
 cimport cython
+import warnings
 
 # define consistent types to use everywhere
 ctypedef cnp.int32_t int_t
@@ -171,6 +172,8 @@ cdef class LEFSimulator(object):
         # check that all arrays are of the right size and shape
         if len(load_prob) != self.N:
             raise ValueError(f"Load probabilities must be of length {self.N}, not {len(load_prob)}")
+        if len(load_prob.shape)!=1:
+            raise ValueError(f"Load probabilities must be 1D, not {len(load_prob.shape)}D")
         if len(unload_prob) != self.N:
             raise ValueError(f"Unload probabilities must be of length {self.N}, not {len(unload_prob)}")
         if len(capture_prob) != self.N:
@@ -360,7 +363,7 @@ cdef class LEFSimulator(object):
         while True:
             pos = self.get_cached_load_position()
             if pos >= self.N - 2 or pos <= 1:  # N-1 is a boundary, we need to be N-4 to fit a 2-wide LEF
-                # print("Ignoring load_prob at 0 or end. load_prob at:", pos)
+                warnings.warn(f"Ignoring load_prob at 0 or end. load_prob at: {pos}")
                 continue
 
             # checking all 3 positions for consistency and to avoid a LEF being born around another LEF's leg

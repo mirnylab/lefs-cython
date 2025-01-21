@@ -385,9 +385,10 @@ def test_watches():
     events = LEF.get_events()  # now it should be reset
     assert len(events) == 0  # all events are reset
 
+
 def test_pause_statistics():
     """
-    Check statistics of STATUS_PAUSE. With uniform pausing probability p, at each step, the LEF pauses with proba p advances with proba 1-p. 
+    Check statistics of STATUS_PAUSE. With uniform pausing probability p, at each step, the LEF pauses with proba p advances with proba 1-p.
     This means a single increment in the LEF position is a binomial random variable with parameters p. From the central limit theorem, the average increment is 1-p ± sqrt(p(1-p)/N).
     This test asserts that the average increment is within 5 standard deviations of 1-p (should work 9_999_994 times out of 10_000_000).
     """
@@ -396,11 +397,11 @@ def test_pause_statistics():
     N = 10000
     p = 0.8
     load_array = np.zeros(N)
-    load_array[int(N/2)] = 1 # load at N/2
-    unload_array = np.zeros((N, 4))  # no unloading
+    load_array[int(N / 2)] = 1  # load at N/2
+    unload_array = np.zeros((N, 5))  # no unloading
     capture_array = np.zeros((N, 2))  # no CTCF
-    release_array = np.zeros(N) # no release
-    pause_array = np.ones(N)*p  # uniform pausing probability
+    release_array = np.zeros(N)  # no release
+    pause_array = np.ones(N) * p  # uniform pausing probability
 
     sim = LEFSimulator(N_LEFS, N, load_array, unload_array, capture_array, release_array, pause_array, skip_load=False)
 
@@ -409,13 +410,13 @@ def test_pause_statistics():
     pos = []
     sim.steps(0, 1)
     for i in range(T):
-        sim.steps(i, i+1)
+        sim.steps(i, i + 1)
         pos.append(sim.get_LEFs())
     pos = np.array(pos)
 
-    #compute leg0 and leg1 increments average and assert that it is within 5 standard deviations of 1-p
-    average_increments = np.abs(np.diff(pos[:, 0, 0]).sum()/N)
-    assert p - 5*np.sqrt(p*(1-p)/N) <= 1 - average_increments <= p + 5*np.sqrt(p*(1-p)/N)
+    # compute leg0 and leg1 increments average and assert that it is within 5 standard deviations of 1-p
+    average_increments = np.abs(np.diff(pos[:, 0, 0]).sum() / N)
+    assert p - 5 * np.sqrt(p * (1 - p) / N) <= 1 - average_increments <= p + 5 * np.sqrt(p * (1 - p) / N)
 
-    average_increments = np.abs(np.diff(pos[:, 0, 1]).sum()/N)
-    assert p - 5*np.sqrt(p*(1-p)/N) <= 1 - average_increments <= p + 5*np.sqrt(p*(1-p)/N)
+    average_increments = np.abs(np.diff(pos[:, 0, 1]).sum() / N)
+    assert p - 5 * np.sqrt(p * (1 - p) / N) <= 1 - average_increments <= p + 5 * np.sqrt(p * (1 - p) / N)

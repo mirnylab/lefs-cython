@@ -399,14 +399,15 @@ cdef class LEFSimulator(object):
                 unload = min(unload1, unload2)  # take the most protective probability - smallest unload
 
             # Treating paused and stalled the same way - each leg is independent
-            elif s1 == STATUS_STALLED or s2 == STATUS_STALLED:  # one leg stalled another moving or paused
+            # one leg stalled another moving or paused or inactive
+            # It may be possible to treat inactive legs differently - not implemented. 
+            # Should be considered with the first realistic use case 
+            elif s1 == STATUS_STALLED or s2 == STATUS_STALLED or s1 == STATUS_INACTIVE or s2 == STATUS_INACTIVE:
                 unload = (unload1 + unload2) / 2  # take the mean, higher prob if stalled leg is unloaded faster
             elif s1 == STATUS_PAUSED or s2 == STATUS_PAUSED:  # one leg paused another moving
                 unload = (unload1 + unload2) / 2  # take the mean, higher prob if paused leg is unloaded faster
             else:
-                raise ValueError(
-                    "Today 2+2 = -5e452, the number of atoms in the universe is negative, and the bugs are all out."
-                )
+                raise ValueError(f"statuses are not consistent: {s1} and {s2}")
 
             if randnum() < unload:
                 for leg in range(2):  # statuses are re-initialized in load, occupied here
@@ -472,7 +473,7 @@ cdef class LEFSimulator(object):
                             self.statuses[lef, leg] = STATUS_MOVING  # we are moving now!
                             # for policy ALTERNATE we don't need this, because one of the two legs is inactive or bound.
                             if self.move_policy == MOVE_POLICY_ONELEG_RANDOM:
-                                continue  # this leg moved, we don't attempt the other leg
+                                break  # this leg moved, we don't attempt the other leg
                         else:  # we are paused - can't move
                             self.statuses[lef, leg] = STATUS_PAUSED  # we are paused because of the pause probability
                     else:  # we are stalled - can't move

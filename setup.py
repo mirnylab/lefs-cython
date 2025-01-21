@@ -7,7 +7,15 @@ setup(
     package_dir={"": "src"},  # new line to specify the package directory
     packages=find_packages(where="src"),  # find packages in src directory
     ext_modules=cythonize(
-        [Extension("lefs_cython.simple", ["src/lefs_cython/simple.pyx"], include_dirs=[numpy.get_include()])]
+        [
+            Extension(
+                "lefs_cython.simple",
+                ["src/lefs_cython/simple.pyx"],
+                include_dirs=[numpy.get_include()],
+                language="c++",
+                extra_compile_args=["-std=c++11"],
+            )
+        ]
     ),
     zip_safe=False,
     install_requires=[

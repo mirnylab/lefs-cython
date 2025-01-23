@@ -60,3 +60,21 @@ The question is how to combine two legs' unloading probability into unloading fo
 The solution was made to take an average except when one of the two legs is stuck at CTCF ("bound"). 
 When the leg is stuck at CTCF, it has a protective effect on the whole cohesin, including the other leg. 
 So in that case we take the smallest unloadig probability. 
+
+
+### Cohesin extrusion policies
+
+Several cohesin leg movement policies are implemented, and can be assigned through the 'move_policy' argument.
+
+**Symmetric extrusion ('move_policy=0')**
+*Both legs are updated at each time step
+
+**Alternate leg policy ('move_policy=1')**
+* Only one leg moves at a time.
+* If one leg is captured at CTCF site, the other leg is chosen to move.
+* If neither leg is CTCF-bound, the updated leg alternates with a probability defined by `alternate_prob`.
+
+
+**Importantly**
+*If one leg is paused or stalled, the alternating logic remains, such that the other leg motion goes on and off at the same rate.
+*Setting alternate_prob=0 enables 1 legged extrusion that switches sides when on leg is bound at CTCF.

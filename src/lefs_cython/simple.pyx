@@ -652,7 +652,150 @@ cdef class LEFSimulator(object):
                     pq.push(pair[float_t,int_t](-new_dist, v))  # push the new distance to the queue
 
         return min(direct_dist, best_dist) # should always be the best_dist, but just in case
-        
+
+
+
+    def compute_region_distances(
+        self,
+        float_t r1_start, float_t r1_end,
+        float_t r2_start, float_t r2_end,
+        bool_t return_loop_count=False
+    ):
+        """
+        Compute the minimal distance between two genomic regions [r1_start, r1_end] and
+        [r2_start, r2_end] using Dijkstra's algorithm on the LEF graph.
+
+        This effectively simulates having a super-node for each region, connected by zero-cost
+        edges to all LEF anchors in that region.
+
+        IMPORTANT: Must call populate_dijkstra_arrays before calling this function.
+
+        Parameters
+        ----------
+        r1_start, r1_end : float
+            The start and end coordinates (in kb) of region 1 (e.g. a promoter).
+        r2_start, r2_end : float
+            The start and end coordinates (in kb) of region 2 (e.g. an enhancer).
+        return_loop_count : bool
+            If True, returns (distance, loop_count), otherwise just distance
+
+        Returns
+        -------
+        float or tuple
+            The minimal distance between any point in region 1 and any point in region 2,
+            taking into account LEF-mediated shortcuts.
+            If return_loop_count=True, returns (distance, number_of_loops_used)
+        """
+        cdef int_t size = self.lefs_pos_flat_sorted.shape[0]
+        cdef float_t INF = 1e10
+        cdef float_t direct_dist, best_dist, cur_dist, anchor_r1_dist, anchor_r2_dist, new_dist
+        cdef int_t[::1] pos_view = self.lefs_pos_flat_sorted
+        cdef int_t[::1] djikstra_loops = np.zeros(size, dtype=int_t_np)  # track loop count
+        cdef priority_queue[pair[float_t,int_t]] pq
+        cdef int_t u, v, k, cur_loops, new_loops, best_loops = 0
+
+        #---------------------------------------------------------
+        # 1. Compute the direct 1D distance between these regions
+        #    (without any LEF shortcuts), i.e. if they overlap,
+        #    distance is zero; otherwise it's the gap between them.
+        #---------------------------------------------------------
+        if r1_end < r2_start:
+            # Region 1 is fully to the left
+            direct_dist = r2_start - r1_end
+        elif r2_end < r1_start:
+            # Region 2 is fully to the left
+            direct_dist = r1_start - r2_end
+        else:
+            # They overlap
+            direct_dist = 0
+
+        #---------------------------------------------------------
+        # 2. Multi-source initialization:
+        #    For every LEF anchor, we compute its distance to region 1
+        #    If anchor is inside region 1, distance = 0
+        #    If anchor is to the left, distance = r1_start - anchor
+        #    If anchor is to the right, distance = anchor - r1_end
+        #    We assign that to self.djikstra_dist[u] and push it
+        #    into the priority queue.
+        #---------------------------------------------------------
+        for k in range(size):
+            anchor_r1_dist = 0
+            if pos_view[k] < r1_start:
+                anchor_r1_dist = r1_start - pos_view[k]
+            elif pos_view[k] > r1_end:
+                anchor_r1_dist = pos_view[k] - r1_end
+            else:
+                anchor_r1_dist = 0  # inside region 1
+
+            self.djikstra_dist[k] = anchor_r1_dist
+            djikstra_loops[k] = 0  # no loops used to reach sources
+            pq.push(pair[float_t,int_t](-anchor_r1_dist, k))
+
+        best_dist = direct_dist
+        best_loops = 0  # direct path uses 0 loops
+
+        #---------------------------------------------------------
+        # 3. Run Dijkstra's Algorithm
+        #    As we pop the nearest anchor 'u', we check how close
+        #    that anchor is to region 2.
+        #---------------------------------------------------------
+        while not pq.empty():
+            top = pq.top()
+            cur_dist = -top.first
+            u = top.second
+            cur_loops = djikstra_loops[u]
+            pq.pop()
+
+            # If we have already found a better route to this anchor, skip
+            if cur_dist > self.djikstra_dist[u]:
+                continue
+
+            # If we can't improve beyond best_dist, early exit
+            if cur_dist > best_dist:
+                break
+
+            #-----------------------------------------------------
+            # 3a. Check distance from this anchor to region 2
+            #-----------------------------------------------------
+            if pos_view[u] < r2_start:
+                anchor_r2_dist = r2_start - pos_view[u]
+            elif pos_view[u] > r2_end:
+                anchor_r2_dist = pos_view[u] - r2_end
+            else:
+                # anchor is inside region 2
+                anchor_r2_dist = 0
+
+            # If going from region 1 -> anchor u -> region 2
+            # yields a smaller distance than we have so far,
+            # update best_dist and best_loops.
+            if cur_dist + anchor_r2_dist < best_dist:
+                best_dist = cur_dist + anchor_r2_dist
+                best_loops = cur_loops
+
+            #-----------------------------------------------------
+            # 3b. Relax neighbors (left, right, shortcut)
+            #-----------------------------------------------------
+            for k in range(3):  # each anchor has 3 neighbors
+                v = self.lef_neigh_pos[u, k]
+                new_dist = cur_dist + self.lef_neigh_dist[u, k]
+                # k=2 is shortcut through a LEF loop
+                new_loops = cur_loops + (1 if k == 2 else 0)
+                
+                # If we find a better path to 'v', update & push
+                if new_dist < self.djikstra_dist[v] and new_dist < best_dist:
+                    self.djikstra_dist[v] = new_dist
+                    djikstra_loops[v] = new_loops
+                    pq.push(pair[float_t,int_t](-new_dist, v))
+
+        # For the direct path, we use 0 loops
+        if direct_dist < best_dist:
+            best_dist = direct_dist
+            best_loops = 0
+
+        if return_loop_count:
+            return best_dist, best_loops
+        else:
+            return best_dist
 
     def populate_dijkstra_arrays(self, float_t lef_length, int_t merge_touching_lefs):
         """
@@ -686,7 +829,6 @@ cdef class LEFSimulator(object):
         # and memcpy avoids any calls to Python
         memcpy(&self.lefs_pos_flat_sorted[0], &self.LEFs[0,0], size * sizeof(int_t))
         sort(&self.lefs_pos_flat_sorted[0], &self.lefs_pos_flat_sorted[0] + size)
-
         # set neighbors for each LEF anchor
         for i in range(size):            
             # previous neighbor
@@ -734,4 +876,3 @@ cdef class LEFSimulator(object):
         A debug function to get the Dijkstra arrays for visualization
         """
         return np.array(self.lefs_pos_flat_sorted), np.array(self.lef_neigh_pos), np.array(self.lef_neigh_dist), np.array(self.djikstra_dist)
-        

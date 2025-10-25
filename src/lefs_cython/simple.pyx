@@ -829,6 +829,7 @@ cdef class LEFSimulator(object):
         # and memcpy avoids any calls to Python
         memcpy(&self.lefs_pos_flat_sorted[0], &self.LEFs[0,0], size * sizeof(int_t))
         sort(&self.lefs_pos_flat_sorted[0], &self.lefs_pos_flat_sorted[0] + size)
+
         # set neighbors for each LEF anchor
         for i in range(size):            
             # previous neighbor
@@ -876,3 +877,4 @@ cdef class LEFSimulator(object):
         A debug function to get the Dijkstra arrays for visualization
         """
         return np.array(self.lefs_pos_flat_sorted), np.array(self.lef_neigh_pos), np.array(self.lef_neigh_dist), np.array(self.djikstra_dist)
+        
